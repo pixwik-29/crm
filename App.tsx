@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   StyleSheet, Text, View, ScrollView, TextInput, TouchableOpacity, 
-  SafeAreaView, StatusBar, ActivityIndicator, Alert, Linking, Share 
+  SafeAreaView, StatusBar, ActivityIndicator, Alert, Linking, Share, Image 
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { 
@@ -67,6 +67,13 @@ const MOCK_PROFILES: Profile[] = [
   { id: 'user-counsellor-2', full_name: 'Priya Sharma', role: 'counsellor', phone: '+919876543211' },
   { id: 'user-manager', full_name: 'Rajesh Kumar (Manager)', role: 'manager' },
   { id: 'user-admin', full_name: 'Dr. Sarah Kapur (Admin)', role: 'admin' }
+];
+
+const DEFAULT_CREDENTIALS = [
+  { email: 'admin@crm.com', password: 'admin123', profileId: 'user-admin' },
+  { email: 'manager@crm.com', password: 'manager123', profileId: 'user-manager' },
+  { email: 'amit@crm.com', password: 'counsellor123', profileId: 'user-counsellor-1' },
+  { email: 'priya@crm.com', password: 'counsellor123', profileId: 'user-counsellor-2' }
 ];
 
 const PIPELINE_STAGES = [
@@ -138,6 +145,11 @@ export default function App() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
+  
+  // Login input states
+  const [emailInput, setEmailInput] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   
   const [isLoading, setIsLoading] = useState(true);
   
@@ -219,6 +231,38 @@ export default function App() {
   const handleLogin = (profile: Profile) => {
     setCurrentUser(profile);
     save('m_user', profile);
+  };
+
+  const handleMobileLoginSubmit = () => {
+    const cleanEmail = emailInput.trim().toLowerCase();
+    const cleanPassword = passwordInput.trim();
+
+    if (!cleanEmail || !cleanPassword) {
+      Alert.alert("Missing Credentials", "Please enter both email and password.");
+      return;
+    }
+
+    const foundCred = DEFAULT_CREDENTIALS.find(c => c.email.toLowerCase() === cleanEmail);
+    if (!foundCred) {
+      Alert.alert("Login Failed", "Invalid email address.");
+      return;
+    }
+
+    if (foundCred.password !== cleanPassword) {
+      Alert.alert("Login Failed", "Incorrect password.");
+      return;
+    }
+
+    const foundProfile = MOCK_PROFILES.find(p => p.id === foundCred.profileId);
+    if (foundProfile) {
+      setCurrentUser(foundProfile);
+      save('m_user', foundProfile);
+      // Clear input fields
+      setEmailInput('');
+      setPasswordInput('');
+    } else {
+      Alert.alert("System Error", "Profile session could not be established.");
+    }
   };
 
   const handleLogout = () => {
@@ -759,32 +803,59 @@ export default function App() {
     return (
       <SafeAreaView style={styles.loginWrapper}>
         <StatusBar barStyle="light-content" />
-        <View style={styles.loginCard}>
-          <View style={styles.loginIconContainer}>
-            <Smartphone size={40} color="#FFF" />
-          </View>
-          <Text style={styles.loginTitle}>EduPath MBBS CRM</Text>
-          <Text style={styles.loginSubtitle}>Counsellor Native Mobile Client</Text>
+        <ScrollView contentContainerStyle={styles.loginScrollContainer} keyboardShouldPersistTaps="handled">
+          <View style={styles.loginCard}>
+            <Image 
+              source={require('./assets/logo.png')} 
+              style={styles.loginLogoImage} 
+            />
+            <Text style={styles.loginTitle}>Perfect Scholar</Text>
+            <Text style={styles.loginSubtitle}>Lead Management System</Text>
 
-          <Text style={styles.impersonateTitle}>Quick Select Accounts</Text>
-          {MOCK_PROFILES.map(p => (
-            <TouchableOpacity 
-              key={p.id} 
-              style={styles.profileBtn}
-              onPress={() => handleLogin(p)}
-            >
-              <View>
-                <Text style={styles.profileBtnName}>{p.full_name}</Text>
-                <Text style={styles.profileBtnRole}>{p.role.toUpperCase()}</Text>
+            <View style={styles.loginForm}>
+              <Text style={styles.inputLabel}>EMAIL ADDRESS</Text>
+              <TextInput 
+                style={styles.loginInput}
+                placeholder="Enter your email address"
+                placeholderTextColor="#64748B"
+                value={emailInput}
+                onChangeText={setEmailInput}
+                autoCapitalize="none"
+                keyboardType="email-address"
+              />
+
+              <Text style={styles.inputLabel}>PASSWORD</Text>
+              <View style={styles.passwordInputContainer}>
+                <TextInput 
+                  style={styles.loginPasswordInput}
+                  placeholder="Enter password"
+                  placeholderTextColor="#64748B"
+                  value={passwordInput}
+                  onChangeText={setPasswordInput}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity 
+                  onPress={() => setShowPassword(!showPassword)}
+                  style={styles.showPasswordBtn}
+                >
+                  <Text style={styles.showPasswordBtnText}>{showPassword ? "Hide" : "Show"}</Text>
+                </TouchableOpacity>
               </View>
-              <ArrowRight size={18} color="#6366F1" />
-            </TouchableOpacity>
-          ))}
-          
-          <Text style={styles.sandboxDisclaimer}>
-            Sync Engine operates in Local Offline mode. Connects dynamically to Supabase databases when variables are present.
-          </Text>
-        </View>
+
+              <TouchableOpacity 
+                style={styles.loginSubmitBtn}
+                onPress={handleMobileLoginSubmit}
+              >
+                <Text style={styles.loginSubmitBtnText}>Sign In to Workspace</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.sandboxDisclaimer}>
+              Workspace accounts: admin@crm.com, manager@crm.com, amit@crm.com. Protected with secure offline credential matching.
+            </Text>
+          </View>
+        </ScrollView>
       </SafeAreaView>
     );
   }
@@ -1017,7 +1088,7 @@ export default function App() {
       {/* Mobile Dashboard Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>MBBS MOBILE CRM</Text>
+          <Text style={styles.headerTitle}>Perfect Scholar CRM</Text>
           <Text style={styles.headerUser}>Hi, {currentUser.full_name} ({currentUser.role.toUpperCase()})</Text>
         </View>
         <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
@@ -1248,9 +1319,14 @@ const styles = StyleSheet.create({
   },
   loginWrapper: {
     flex: 1,
-    backgroundColor: '#0A0A14',
+    backgroundColor: '#0A0A14'
+  },
+  loginScrollContainer: {
+    flexGrow: 1,
     justifyContent: 'center',
-    alignItems: 'center'
+    alignItems: 'center',
+    paddingVertical: 40,
+    width: '100%'
   },
   loginCard: {
     width: '85%',
@@ -1261,11 +1337,11 @@ const styles = StyleSheet.create({
     borderColor: '#1E1E38',
     alignItems: 'center'
   },
-  loginIconContainer: {
-    padding: 15,
-    backgroundColor: '#4F46E5',
-    borderRadius: 18,
-    marginBottom: 15
+  loginLogoImage: {
+    width: 130,
+    height: 130,
+    resizeMode: 'contain',
+    marginBottom: 10
   },
   loginTitle: {
     color: '#FFF',
@@ -1279,38 +1355,64 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 25
   },
-  impersonateTitle: {
-    color: '#94A3B8',
-    fontSize: 10,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: 10,
-    alignSelf: 'flex-start'
-  },
-  profileBtn: {
+  loginForm: {
     width: '100%',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    backgroundColor: '#171730',
-    borderRadius: 15,
+    marginTop: 20
+  },
+  inputLabel: {
+    fontSize: 9,
+    fontWeight: 'bold',
+    color: '#94A3B8',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+    textTransform: 'uppercase'
+  },
+  loginInput: {
+    backgroundColor: '#1E1E38',
     borderWidth: 1,
     borderColor: '#24244E',
-    marginBottom: 10,
+    borderRadius: 12,
+    color: '#FFF',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 13,
+    marginBottom: 16
+  },
+  passwordInputContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#1E1E38',
+    borderWidth: 1,
+    borderColor: '#24244E',
+    borderRadius: 12,
+    marginBottom: 20
+  },
+  loginPasswordInput: {
+    flex: 1,
+    color: '#FFF',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 13
+  },
+  showPasswordBtn: {
+    paddingHorizontal: 12
+  },
+  showPasswordBtnText: {
+    color: '#6366F1',
+    fontSize: 11,
+    fontWeight: 'bold'
+  },
+  loginSubmitBtn: {
+    backgroundColor: '#4F46E5',
+    borderRadius: 12,
+    paddingVertical: 14,
+    justifyContent: 'center',
     alignItems: 'center'
   },
-  profileBtnName: {
+  loginSubmitBtnText: {
     color: '#FFF',
     fontSize: 13,
     fontWeight: 'bold'
-  },
-  profileBtnRole: {
-    color: '#4F46E5',
-    fontSize: 9,
-    fontWeight: '800',
-    marginTop: 2
   },
   sandboxDisclaimer: {
     color: '#475569',
