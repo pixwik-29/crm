@@ -65,16 +65,17 @@ export interface ActivityLog {
 const MOCK_PROFILES: Profile[] = [
   { id: 'user-counsellor-1', full_name: 'Amit Verma', role: 'counsellor', phone: '+919876543210' },
   { id: 'user-counsellor-2', full_name: 'Priya Sharma', role: 'counsellor', phone: '+919876543211' },
-  { id: 'user-manager', full_name: 'Rajesh Kumar (Manager)', role: 'manager' },
-  { id: 'user-admin', full_name: 'Dr. Sarah Kapur (Admin)', role: 'admin' }
+  { id: 'user-manager', full_name: 'Rajesh Kumar (Manager)', role: 'manager', phone: '+919876543213' },
+  { id: 'user-admin', full_name: 'Dr. Sarah Kapur (Admin)', role: 'admin', phone: '+919876543212' }
 ];
 
 const DEFAULT_CREDENTIALS = [
-  { email: 'admin@crm.com', password: 'admin123', profileId: 'user-admin' },
-  { email: 'manager@crm.com', password: 'manager123', profileId: 'user-manager' },
-  { email: 'amit@crm.com', password: 'counsellor123', profileId: 'user-counsellor-1' },
-  { email: 'priya@crm.com', password: 'counsellor123', profileId: 'user-counsellor-2' }
+  { email: 'admin@crm.com', password: 'admin123', profileId: 'user-admin', phone: '+919876543212' },
+  { email: 'manager@crm.com', password: 'manager123', profileId: 'user-manager', phone: '+919876543213' },
+  { email: 'amit@crm.com', password: 'counsellor123', profileId: 'user-counsellor-1', phone: '+919876543210' },
+  { email: 'priya@crm.com', password: 'counsellor123', profileId: 'user-counsellor-2', phone: '+919876543211' }
 ];
+
 
 const PIPELINE_STAGES = [
   '1st followup',
@@ -147,9 +148,16 @@ export default function App() {
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   
   // Login input states
+  const [loginMethod, setLoginMethod] = useState<'email' | 'phone'>('email');
   const [emailInput, setEmailInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [phoneInput, setPhoneInput] = useState('');
+  const [otpInput, setOtpInput] = useState('');
+  const [generatedOtp, setGeneratedOtp] = useState('');
+  const [isOtpSent, setIsOtpSent] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   
   const [isLoading, setIsLoading] = useState(true);
   
@@ -264,6 +272,95 @@ export default function App() {
       Alert.alert("System Error", "Profile session could not be established.");
     }
   };
+
+  const sendMobileSmsOtp = async () => {
+    if (!phoneInput.trim()) {
+      Alert.alert("Missing Phone", "Please enter your mobile number.");
+      return;
+    }
+    
+    setIsSubmitting(true);
+    const cleanInputPhone = phoneInput.replace(/\D/g, '');
+
+    const foundCred = DEFAULT_CREDENTIALS.find(c => {
+      if (!c.phone) return false;
+      const cleanCredPhone = c.phone.replace(/\D/g, '');
+      return cleanCredPhone.endsWith(cleanInputPhone) || cleanInputPhone.endsWith(cleanCredPhone);
+    });
+
+    if (!foundCred) {
+      Alert.alert("Login Failed", "This mobile number is not registered.");
+      setIsSubmitting(false);
+      return;
+    }
+
+    try {
+      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      setGeneratedOtp(otpCode);
+
+      // Clean phone for SAP Teleservices API call: start with 91, no leading + or 0
+      let cleanPhone = foundCred.phone.replace(/\D/g, '');
+      if (cleanPhone.length === 10) {
+        cleanPhone = '91' + cleanPhone;
+      }
+
+      const apiKey = '9cf5318f-903a-11ef-a4f5-e29d2b69142c';
+      const templateId = '1707177398599485291';
+      const message = `Your OTP for verification is ${otpCode}. It is valid for 1 minutes. Do not share this OTP with anyone. Use this code to validate your mobile number. - PerfectScholar`;
+      const encodedMessage = encodeURIComponent(message);
+      const sender = 'PFSCLR';
+      const routeType = 1;
+
+      const apiUrl = `https://sapteleservices.com/SMS_API/sendsms.php?apikey=${apiKey}&mobile=${cleanPhone}&sendername=${sender}&message=${encodedMessage}&routetype=${routeType}&tid=${templateId}`;
+
+      const res = await fetch(apiUrl, { method: 'GET' });
+      const text = await res.text();
+      console.log('Mobile SMS Delivery Response:', text);
+
+      setIsOtpSent(true);
+      Alert.alert("OTP Sent", `A real 6-digit verification OTP code has been sent via SMS to ${foundCred.phone}.`);
+    } catch (e: any) {
+      Alert.alert("Delivery Error", e.message || "Failed to deliver SMS. Check internet connection.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const verifyMobileSmsOtp = () => {
+    if (!otpInput.trim()) {
+      Alert.alert("Missing OTP", "Please enter the verification OTP code.");
+      return;
+    }
+
+    if (otpInput.trim() === generatedOtp) {
+      const cleanInputPhone = phoneInput.replace(/\D/g, '');
+      const foundCred = DEFAULT_CREDENTIALS.find(c => {
+        if (!c.phone) return false;
+        const cleanCredPhone = c.phone.replace(/\D/g, '');
+        return cleanCredPhone.endsWith(cleanInputPhone) || cleanInputPhone.endsWith(cleanCredPhone);
+      });
+
+      if (foundCred) {
+        const foundProfile = MOCK_PROFILES.find(p => p.id === foundCred.profileId);
+        if (foundProfile) {
+          setCurrentUser(foundProfile);
+          save('m_user', foundProfile);
+          // Clear states
+          setPhoneInput('');
+          setOtpInput('');
+          setGeneratedOtp('');
+          setIsOtpSent(false);
+        } else {
+          Alert.alert("System Error", "Profile session could not be established.");
+        }
+      } else {
+        Alert.alert("System Error", "Matching credentials not found.");
+      }
+    } else {
+      Alert.alert("Verification Failed", "Incorrect OTP. Please enter the code sent to your mobile phone.");
+    }
+  };
+
 
   const handleLogout = () => {
     setCurrentUser(null);
@@ -813,43 +910,120 @@ export default function App() {
             <Text style={styles.loginSubtitle}>Lead Management System</Text>
 
             <View style={styles.loginForm}>
-              <Text style={styles.inputLabel}>EMAIL ADDRESS</Text>
-              <TextInput 
-                style={styles.loginInput}
-                placeholder="Enter your email address"
-                placeholderTextColor="#64748B"
-                value={emailInput}
-                onChangeText={setEmailInput}
-                autoCapitalize="none"
-                keyboardType="email-address"
-              />
-
-              <Text style={styles.inputLabel}>PASSWORD</Text>
-              <View style={styles.passwordInputContainer}>
-                <TextInput 
-                  style={styles.loginPasswordInput}
-                  placeholder="Enter password"
-                  placeholderTextColor="#64748B"
-                  value={passwordInput}
-                  onChangeText={setPasswordInput}
-                  secureTextEntry={!showPassword}
-                  autoCapitalize="none"
-                />
+              {/* Method Selector Tabs */}
+              <View style={styles.loginTabsRow}>
                 <TouchableOpacity 
-                  onPress={() => setShowPassword(!showPassword)}
-                  style={styles.showPasswordBtn}
+                  style={[styles.loginTabButton, loginMethod === 'email' && styles.loginTabButtonActive]}
+                  onPress={() => { setLoginMethod('email'); }}
                 >
-                  <Text style={styles.showPasswordBtnText}>{showPassword ? "Hide" : "Show"}</Text>
+                  <Text style={[styles.loginTabButtonText, loginMethod === 'email' && styles.loginTabButtonTextActive]}>Email</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.loginTabButton, loginMethod === 'phone' && styles.loginTabButtonActive]}
+                  onPress={() => { setLoginMethod('phone'); }}
+                >
+                  <Text style={[styles.loginTabButtonText, loginMethod === 'phone' && styles.loginTabButtonTextActive]}>Phone OTP</Text>
                 </TouchableOpacity>
               </View>
 
-              <TouchableOpacity 
-                style={styles.loginSubmitBtn}
-                onPress={handleMobileLoginSubmit}
-              >
-                <Text style={styles.loginSubmitBtnText}>Sign In to Workspace</Text>
-              </TouchableOpacity>
+              {loginMethod === 'email' ? (
+                <View>
+                  <Text style={styles.inputLabel}>EMAIL ADDRESS</Text>
+                  <TextInput 
+                    style={styles.loginInput}
+                    placeholder="Enter your email address"
+                    placeholderTextColor="#64748B"
+                    value={emailInput}
+                    onChangeText={setEmailInput}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                  />
+
+                  <Text style={styles.inputLabel}>PASSWORD</Text>
+                  <View style={styles.passwordInputContainer}>
+                    <TextInput 
+                      style={styles.loginPasswordInput}
+                      placeholder="Enter password"
+                      placeholderTextColor="#64748B"
+                      value={passwordInput}
+                      onChangeText={setPasswordInput}
+                      secureTextEntry={!showPassword}
+                      autoCapitalize="none"
+                    />
+                    <TouchableOpacity 
+                      onPress={() => setShowPassword(!showPassword)}
+                      style={styles.showPasswordBtn}
+                    >
+                      <Text style={styles.showPasswordBtnText}>{showPassword ? "Hide" : "Show"}</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <TouchableOpacity 
+                    style={styles.loginSubmitBtn}
+                    onPress={handleMobileLoginSubmit}
+                    disabled={isSubmitting}
+                  >
+                    <Text style={styles.loginSubmitBtnText}>Sign In to Workspace</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View>
+                  {!isOtpSent ? (
+                    <View>
+                      <Text style={styles.inputLabel}>MOBILE NUMBER</Text>
+                      <TextInput 
+                        style={styles.loginInput}
+                        placeholder="e.g. 9876543210"
+                        placeholderTextColor="#64748B"
+                        value={phoneInput}
+                        onChangeText={setPhoneInput}
+                        keyboardType="phone-pad"
+                      />
+
+                      <TouchableOpacity 
+                        style={styles.loginSubmitBtn}
+                        onPress={sendMobileSmsOtp}
+                        disabled={isSubmitting}
+                      >
+                        <Text style={styles.loginSubmitBtnText}>Send OTP Code</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View>
+                      <Text style={styles.inputLabel}>ENTER OTP CODE</Text>
+                      <TextInput 
+                        style={[styles.loginInput, { letterSpacing: 6, textAlign: 'center', fontWeight: 'bold' }]}
+                        placeholder="Enter 6-digit OTP"
+                        placeholderTextColor="#64748B"
+                        value={otpInput}
+                        onChangeText={setOtpInput}
+                        keyboardType="number-pad"
+                        maxLength={6}
+                      />
+
+                      <TouchableOpacity 
+                        style={[styles.loginSubmitBtn, { backgroundColor: '#10B981' }]}
+                        onPress={verifyMobileSmsOtp}
+                        disabled={isSubmitting}
+                      >
+                        <Text style={styles.loginSubmitBtnText}>Verify & Sign In</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity 
+                        style={styles.changePhoneBtn}
+                        onPress={() => {
+                          setIsOtpSent(false);
+                          setOtpInput('');
+                        }}
+                      >
+                        <Text style={styles.changePhoneBtnText}>Change Phone Number</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              )}
             </View>
+
 
             <Text style={styles.sandboxDisclaimer}>
               Workspace accounts: admin@crm.com, manager@crm.com, amit@crm.com. Protected with secure offline credential matching.
@@ -2159,5 +2333,43 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     color: '#4F46E5'
+  },
+  loginTabsRow: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+    marginBottom: 20,
+    width: '100%',
+  },
+  loginTabButton: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  loginTabButtonActive: {
+    borderBottomColor: '#4F46E5',
+  },
+  loginTabButtonText: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  loginTabButtonTextActive: {
+    color: '#4F46E5',
+  },
+  changePhoneBtn: {
+    marginTop: 15,
+    alignItems: 'center',
+  },
+  changePhoneBtnText: {
+    color: '#4F46E5',
+    fontSize: 12,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
   }
 });
+
