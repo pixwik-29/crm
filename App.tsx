@@ -66,15 +66,16 @@ const MOCK_PROFILES: Profile[] = [
   { id: 'user-counsellor-1', full_name: 'Amit Verma', role: 'counsellor', phone: '+919876543210' },
   { id: 'user-counsellor-2', full_name: 'Priya Sharma', role: 'counsellor', phone: '+919876543211' },
   { id: 'user-manager', full_name: 'Rajesh Kumar (Manager)', role: 'manager', phone: '+919876543213' },
-  { id: 'user-admin', full_name: 'Dr. Sarah Kapur (Admin)', role: 'admin', phone: '+919876543212' }
+  { id: 'user-admin', full_name: 'Nash Newton (Admin)', role: 'admin', phone: '+919876543212' }
 ];
 
 const DEFAULT_CREDENTIALS = [
-  { email: 'admin@crm.com', password: 'admin123', profileId: 'user-admin', phone: '+919876543212' },
+  { email: 'nash@pixwik.com', password: 'Pixwik@8899', profileId: 'user-admin', phone: '+919876543212' },
   { email: 'manager@crm.com', password: 'manager123', profileId: 'user-manager', phone: '+919876543213' },
   { email: 'amit@crm.com', password: 'counsellor123', profileId: 'user-counsellor-1', phone: '+919876543210' },
   { email: 'priya@crm.com', password: 'counsellor123', profileId: 'user-counsellor-2', phone: '+919876543211' }
 ];
+
 
 
 const PIPELINE_STAGES = [
