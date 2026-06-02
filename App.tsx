@@ -160,6 +160,7 @@ export default function App() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>(MOCK_PROFILES);
   
   // Login input states
   const [loginMethod, setLoginMethod] = useState<'email' | 'phone'>('email');
@@ -218,6 +219,14 @@ export default function App() {
   const fetchData = async () => {
     try {
       setIsLoading(true);
+
+      // 0. Fetch profiles
+      const { data: profilesData, error: profilesError } = await supabase
+        .from('profiles')
+        .select('*');
+      if (profilesError) throw profilesError;
+      setProfiles(profilesData || []);
+      await AsyncStorage.setItem('m_profiles', JSON.stringify(profilesData || []));
 
       // 1. Fetch leads
       const { data: leadsData, error: leadsError } = await supabase
@@ -278,12 +287,14 @@ export default function App() {
       Alert.alert("Sync Notice", "Failed to sync with server. Running in offline cached mode.");
 
       // Offline Cache Fallback
+      const cachedProfiles = await AsyncStorage.getItem('m_profiles');
       const cachedLeads = await AsyncStorage.getItem('m_leads');
       const cachedNotes = await AsyncStorage.getItem('m_notes');
       const cachedTasks = await AsyncStorage.getItem('m_tasks');
       const cachedLogs = await AsyncStorage.getItem('m_logs');
       const cachedChat = await AsyncStorage.getItem('m_chat');
 
+      if (cachedProfiles) setProfiles(JSON.parse(cachedProfiles));
       if (cachedLeads) setLeads(JSON.parse(cachedLeads));
       if (cachedNotes) setNotes(JSON.parse(cachedNotes));
       if (cachedTasks) setTasks(JSON.parse(cachedTasks));
@@ -842,7 +853,7 @@ export default function App() {
       // Add activity log
       const desc = field === 'status' 
         ? `Pipeline status changed to "${value}"` 
-        : `Assigned counsellor changed to "${MOCK_PROFILES.find(p => p.id === value)?.full_name || 'Unassigned'}"`;
+        : `Assigned counsellor changed to "${profiles.find(p => p.id === value)?.full_name || 'Unassigned'}"`;
         
       await supabase.from('activity_logs').insert([{
         lead_id: selectedLead.id,
@@ -867,7 +878,7 @@ export default function App() {
     const title = isStatus ? 'Change Pipeline Status' : 'Assign Counsellor';
     const options = isStatus 
       ? PIPELINE_STAGES 
-      : [...MOCK_PROFILES.filter(p => p.role === 'counsellor').map(p => ({ id: p.id, name: p.full_name })), { id: null, name: 'Unassigned' }];
+      : [...profiles.filter(p => p.role === 'counsellor').map(p => ({ id: p.id, name: p.full_name })), { id: null, name: 'Unassigned' }];
 
     return (
       <View style={styles.feedbackModalOverlay}>
@@ -1349,7 +1360,7 @@ export default function App() {
                 <Text style={styles.detailLabel}>ASSIGNED TO</Text>
                 <View style={styles.pickerValueRow}>
                   <Text style={styles.detailVal}>
-                    {MOCK_PROFILES.find(p => p.id === selectedLead.assigned_counsellor_id)?.full_name || 'Unassigned'}
+                    {profiles.find(p => p.id === selectedLead.assigned_counsellor_id)?.full_name || 'Unassigned'}
                   </Text>
                   <Text style={styles.pickerChevron}>▾</Text>
                 </View>
