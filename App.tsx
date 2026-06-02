@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   StyleSheet, Text, View, ScrollView, TextInput, TouchableOpacity, 
-  SafeAreaView, StatusBar, ActivityIndicator, Alert, Linking, Share, Image 
+  SafeAreaView, StatusBar, ActivityIndicator, Alert, Linking, Share, Image, Platform 
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { 
@@ -9,6 +9,8 @@ import {
   Plus, Check, LogOut, ArrowRight, Eye, Shield, Bell, PlusCircle, CheckCircle, Smartphone 
 } from 'lucide-react-native';
 import { createClient } from '@supabase/supabase-js';
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
 
 const supabaseUrl = 'https://gkayyfwadwwsucpqeefw.supabase.co';
 const supabaseAnonKey = 'sb_publishable_VLg-MNbQe3Q7VrBG_ldcrA_cyTJ7lEv';
@@ -21,6 +23,47 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: false,
   },
 });
+
+// Configure foreground notification handling
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
+
+async function registerForPushNotificationsAsync() {
+  if (Platform.OS === 'web') return null;
+  
+  if (!Device.isDevice) {
+    console.log('Must use physical device for Push Notifications');
+    return null;
+  }
+  
+  try {
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
+    if (existingStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+    if (finalStatus !== 'granted') {
+      console.log('Failed to get push token for push notification!');
+      return null;
+    }
+    
+    const tokenData = await Notifications.getExpoPushTokenAsync({
+      projectId: '13d4d5f3-78e7-444f-9e40-fcfdc281b17e'
+    });
+    return tokenData.data;
+  } catch (e) {
+    console.error('Error getting push token', e);
+    return null;
+  }
+}
 
 // --- TYPES ---
 export interface Profile {
@@ -340,10 +383,29 @@ export default function App() {
     checkSession();
   }, []);
 
-  // Fetch live CRM data when user session is loaded/established
+  // Fetch live CRM data and register push notifications when session is established
   useEffect(() => {
     if (currentUser) {
       fetchData();
+      
+      const savePushToken = async (token: string, userId: string) => {
+        try {
+          const { error } = await supabase
+            .from('profiles')
+            .update({ push_token: token })
+            .eq('id', userId);
+          if (error) console.error("Error updating push token in DB:", error);
+        } catch (e) {
+          console.error("Error updating push token:", e);
+        }
+      };
+
+      registerForPushNotificationsAsync().then(token => {
+        if (token) {
+          console.log("Expo Push Token:", token);
+          savePushToken(token, currentUser.id);
+        }
+      });
     }
   }, [currentUser]);
 
