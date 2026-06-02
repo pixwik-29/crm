@@ -8,6 +8,19 @@ import {
   Phone, MessageSquare, Mail, Tag, Award, User, Clock, Search, 
   Plus, Check, LogOut, ArrowRight, Eye, Shield, Bell, PlusCircle, CheckCircle, Smartphone 
 } from 'lucide-react-native';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = 'https://gkayyfwadwwsucpqeefw.supabase.co';
+const supabaseAnonKey = 'sb_publishable_VLg-MNbQe3Q7VrBG_ldcrA_cyTJ7lEv';
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    storage: AsyncStorage,
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: false,
+  },
+});
 
 // --- TYPES ---
 export interface Profile {
@@ -201,48 +214,136 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStageFilter, setSelectedStageFilter] = useState<string>('All');
 
-  // Load persistent DB
-  useEffect(() => {
-    const loadCache = async () => {
-      try {
-        const cachedUser = await AsyncStorage.getItem('m_user');
-        const cachedLeads = await AsyncStorage.getItem('m_leads');
-        const cachedNotes = await AsyncStorage.getItem('m_notes');
-        const cachedTasks = await AsyncStorage.getItem('m_tasks');
-        const cachedLogs = await AsyncStorage.getItem('m_logs');
-        const cachedChat = await AsyncStorage.getItem('m_chat');
+  // Fetch all live data from Supabase
+  const fetchData = async () => {
+    try {
+      setIsLoading(true);
 
-        if (cachedUser) setCurrentUser(JSON.parse(cachedUser));
-        setLeads(cachedLeads ? JSON.parse(cachedLeads) : INITIAL_LEADS);
-        setNotes(cachedNotes ? JSON.parse(cachedNotes) : []);
-        setTasks(cachedTasks ? JSON.parse(cachedTasks) : []);
-        setLogs(cachedLogs ? JSON.parse(cachedLogs) : []);
-        setChatHistory(cachedChat ? JSON.parse(cachedChat) : []);
+      // 1. Fetch leads
+      const { data: leadsData, error: leadsError } = await supabase
+        .from('leads')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (leadsError) throw leadsError;
+      setLeads(leadsData || []);
+      await AsyncStorage.setItem('m_leads', JSON.stringify(leadsData || []));
+
+      // 2. Fetch notes
+      const { data: notesData, error: notesError } = await supabase
+        .from('notes')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (notesError) throw notesError;
+      setNotes(notesData || []);
+      await AsyncStorage.setItem('m_notes', JSON.stringify(notesData || []));
+
+      // 3. Fetch tasks
+      const { data: tasksData, error: tasksError } = await supabase
+        .from('tasks')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (tasksError) throw tasksError;
+      setTasks(tasksData || []);
+      await AsyncStorage.setItem('m_tasks', JSON.stringify(tasksData || []));
+
+      // 4. Fetch activity logs
+      const { data: logsData, error: logsError } = await supabase
+        .from('activity_logs')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (logsError) throw logsError;
+      setLogs(logsData || []);
+      await AsyncStorage.setItem('m_logs', JSON.stringify(logsData || []));
+
+      // 5. Fetch WhatsApp history
+      const { data: chatData, error: chatError } = await supabase
+        .from('whatsapp_history')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (chatError) throw chatError;
+
+      // Remap incoming/outgoing to mobile in/out
+      const remappedChat = (chatData || []).map(c => ({
+        id: c.id,
+        lead_id: c.lead_id,
+        direction: c.direction === 'incoming' ? ('in' as const) : ('out' as const),
+        text: c.message_text,
+        time: new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }));
+      setChatHistory(remappedChat);
+      await AsyncStorage.setItem('m_chat', JSON.stringify(remappedChat));
+
+    } catch (e: any) {
+      console.error("Supabase data fetch error: ", e);
+      Alert.alert("Sync Notice", "Failed to sync with server. Running in offline cached mode.");
+
+      // Offline Cache Fallback
+      const cachedLeads = await AsyncStorage.getItem('m_leads');
+      const cachedNotes = await AsyncStorage.getItem('m_notes');
+      const cachedTasks = await AsyncStorage.getItem('m_tasks');
+      const cachedLogs = await AsyncStorage.getItem('m_logs');
+      const cachedChat = await AsyncStorage.getItem('m_chat');
+
+      if (cachedLeads) setLeads(JSON.parse(cachedLeads));
+      if (cachedNotes) setNotes(JSON.parse(cachedNotes));
+      if (cachedTasks) setTasks(JSON.parse(cachedTasks));
+      if (cachedLogs) setLogs(JSON.parse(cachedLogs));
+      if (cachedChat) setChatHistory(JSON.parse(cachedChat));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Check active session on mount
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+
+          if (profile) {
+            setCurrentUser(profile as Profile);
+            await AsyncStorage.setItem('m_user', JSON.stringify(profile));
+          } else {
+            setCurrentUser(null);
+            await AsyncStorage.removeItem('m_user');
+          }
+        } else {
+          // Check cached session
+          const cachedUser = await AsyncStorage.getItem('m_user');
+          if (cachedUser) setCurrentUser(JSON.parse(cachedUser));
+        }
       } catch (e) {
-        console.error("Storage cache read error: ", e);
+        console.error("Session check error: ", e);
+        const cachedUser = await AsyncStorage.getItem('m_user');
+        if (cachedUser) setCurrentUser(JSON.parse(cachedUser));
       } finally {
         setIsLoading(false);
       }
     };
-    loadCache();
+    checkSession();
   }, []);
 
-  // Save changes to AsyncStorage
-  const save = async (key: string, data: any) => {
-    try {
-      await AsyncStorage.setItem(key, JSON.stringify(data));
-    } catch (e) {
-      console.error("AsyncStorage write error: ", e);
+  // Fetch live CRM data when user session is loaded/established
+  useEffect(() => {
+    if (currentUser) {
+      fetchData();
     }
-  };
+  }, [currentUser]);
 
-  // Auth logins
-  const handleLogin = (profile: Profile) => {
+  // Auth logins helper
+  const handleLogin = async (profile: Profile) => {
     setCurrentUser(profile);
-    save('m_user', profile);
+    await AsyncStorage.setItem('m_user', JSON.stringify(profile));
   };
 
-  const handleMobileLoginSubmit = () => {
+  // Sign in via Supabase Email/Password Auth
+  const handleMobileLoginSubmit = async () => {
     const cleanEmail = emailInput.trim().toLowerCase();
     const cleanPassword = passwordInput.trim();
 
@@ -251,26 +352,39 @@ export default function App() {
       return;
     }
 
-    const foundCred = DEFAULT_CREDENTIALS.find(c => c.email.toLowerCase() === cleanEmail);
-    if (!foundCred) {
-      Alert.alert("Login Failed", "Invalid email address.");
-      return;
-    }
+    setIsSubmitting(true);
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password: cleanPassword
+      });
 
-    if (foundCred.password !== cleanPassword) {
-      Alert.alert("Login Failed", "Incorrect password.");
-      return;
-    }
+      if (error) {
+        Alert.alert("Login Failed", error.message);
+        setIsSubmitting(false);
+        return;
+      }
 
-    const foundProfile = MOCK_PROFILES.find(p => p.id === foundCred.profileId);
-    if (foundProfile) {
-      setCurrentUser(foundProfile);
-      save('m_user', foundProfile);
-      // Clear input fields
-      setEmailInput('');
-      setPasswordInput('');
-    } else {
-      Alert.alert("System Error", "Profile session could not be established.");
+      if (data.session?.user) {
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', data.session.user.id)
+          .single();
+
+        if (profile) {
+          setCurrentUser(profile as Profile);
+          await AsyncStorage.setItem('m_user', JSON.stringify(profile));
+          setEmailInput('');
+          setPasswordInput('');
+        } else {
+          Alert.alert("Profile Error", "Could not fetch user profile record.");
+        }
+      }
+    } catch (e: any) {
+      Alert.alert("System Error", e.message || "Authentication error.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -327,7 +441,8 @@ export default function App() {
     }
   };
 
-  const verifyMobileSmsOtp = () => {
+  // Verify Phone OTP and log in to Supabase under the hood
+  const verifyMobileSmsOtp = async () => {
     if (!otpInput.trim()) {
       Alert.alert("Missing OTP", "Please enter the verification OTP code.");
       return;
@@ -342,17 +457,42 @@ export default function App() {
       });
 
       if (foundCred) {
-        const foundProfile = MOCK_PROFILES.find(p => p.id === foundCred.profileId);
-        if (foundProfile) {
-          setCurrentUser(foundProfile);
-          save('m_user', foundProfile);
-          // Clear states
-          setPhoneInput('');
-          setOtpInput('');
-          setGeneratedOtp('');
-          setIsOtpSent(false);
-        } else {
-          Alert.alert("System Error", "Profile session could not be established.");
+        setIsSubmitting(true);
+        try {
+          const { data, error } = await supabase.auth.signInWithPassword({
+            email: foundCred.email,
+            password: foundCred.password
+          });
+
+          if (error) {
+            Alert.alert("Login Failed", error.message);
+            setIsSubmitting(false);
+            return;
+          }
+
+          if (data.session?.user) {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', data.session.user.id)
+              .single();
+
+            if (profile) {
+              setCurrentUser(profile as Profile);
+              await AsyncStorage.setItem('m_user', JSON.stringify(profile));
+              // Clear states
+              setPhoneInput('');
+              setOtpInput('');
+              setGeneratedOtp('');
+              setIsOtpSent(false);
+            } else {
+              Alert.alert("Profile Error", "Profile could not be found.");
+            }
+          }
+        } catch (e: any) {
+          Alert.alert("System Error", e.message || "Authentication error.");
+        } finally {
+          setIsSubmitting(false);
         }
       } else {
         Alert.alert("System Error", "Matching credentials not found.");
@@ -362,146 +502,208 @@ export default function App() {
     }
   };
 
-
-  const handleLogout = () => {
+  // Sign out from Supabase Auth
+  const handleLogout = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.error("Sign out error:", e);
+    }
     setCurrentUser(null);
-    AsyncStorage.removeItem('m_user');
+    await AsyncStorage.removeItem('m_user');
   };
 
   // Lead additions
-  const handleAddLead = () => {
+  const handleAddLead = async () => {
     if (!newLeadName.trim() || !newLeadPhone.trim()) {
       Alert.alert("Missing Fields", "Name and phone are required.");
       return;
     }
 
-    const parsedNeet = newLeadNeet ? parseInt(newLeadNeet) : 0;
+    setIsSubmitting(true);
+    const parsedNeet = newLeadNeet ? parseInt(newLeadNeet) : null;
     let score = 30;
-    if (parsedNeet > 450) score = 90;
-    else if (parsedNeet > 300) score = 65;
+    if (parsedNeet && parsedNeet > 450) score = 90;
+    else if (parsedNeet && parsedNeet > 300) score = 65;
 
-    const newLead: Lead = {
-      id: `lead-${Date.now()}`,
+    const leadPayload = {
       name: newLeadName,
       phone: newLeadPhone,
-      neet_marks: newLeadNeet ? parsedNeet : undefined,
-      budget: newLeadBudget ? parseFloat(newLeadBudget) * 100000 : undefined,
-      preferred_destination: newLeadDest || undefined,
+      neet_marks: parsedNeet,
+      budget: newLeadBudget ? parseFloat(newLeadBudget) * 100000 : null,
+      preferred_destination: newLeadDest || null,
       lead_source: newLeadSource,
       status: '1st followup',
       assigned_counsellor_id: currentUser?.role === 'counsellor' ? currentUser.id : null,
       tags: [newLeadDest].filter(Boolean),
-      score,
-      created_at: new Date().toISOString()
+      score
     };
 
-    const updated = [newLead, ...leads];
-    setLeads(updated);
-    save('m_leads', updated);
+    try {
+      const { data: newLead, error } = await supabase
+        .from('leads')
+        .insert([leadPayload])
+        .select()
+        .single();
 
-    // Add activity log
-    const log: ActivityLog = {
-      id: `log-${Date.now()}`,
-      lead_id: newLead.id,
-      action_type: 'lead_created',
-      description: `Lead manually entered via Mobile CRM client`,
-      created_at: new Date().toISOString(),
-      actor_name: currentUser?.full_name || 'System'
-    };
-    const updatedLogs = [log, ...logs];
-    setLogs(updatedLogs);
-    save('m_logs', updatedLogs);
+      if (error) throw error;
 
-    // Reset fields
-    setNewLeadName('');
-    setNewLeadPhone('');
-    setNewLeadNeet('');
-    setNewLeadBudget('');
-    setNewLeadDest('');
-    setIsAddModalOpen(false);
+      // Add activity log
+      await supabase.from('activity_logs').insert([{
+        lead_id: newLead.id,
+        actor_id: currentUser?.id,
+        action_type: 'lead_created',
+        description: `Lead manually entered via Mobile CRM client`
+      }]);
 
-    Alert.alert("Lead Captured", `${newLead.name} successfully registered. Welcome WhatsApp templates are queued.`);
+      // Refresh data
+      fetchData();
+
+      // Reset fields
+      setNewLeadName('');
+      setNewLeadPhone('');
+      setNewLeadNeet('');
+      setNewLeadBudget('');
+      setNewLeadDest('');
+      setIsAddModalOpen(false);
+
+      Alert.alert("Lead Captured", `${newLead.name} successfully registered.`);
+    } catch (e: any) {
+      Alert.alert("Create Lead Failed", e.message || "Could not save lead.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Note add
-  const handleAddNote = () => {
+  const handleAddNote = async () => {
     if (!noteText.trim() || !selectedLead) return;
-    const newNote: Note = {
-      id: `note-${Date.now()}`,
-      lead_id: selectedLead.id,
-      content: noteText,
-      created_at: new Date().toISOString(),
-      author_name: currentUser?.full_name || 'Counsellor'
-    };
-    const updated = [newNote, ...notes];
-    setNotes(updated);
-    save('m_notes', updated);
 
-    // log
-    const log: ActivityLog = {
-      id: `log-${Date.now()}`,
-      lead_id: selectedLead.id,
-      action_type: 'note_added',
-      description: `Note added: "${noteText.substring(0, 20)}..."`,
-      created_at: new Date().toISOString(),
-      actor_name: currentUser?.full_name || 'Counsellor'
-    };
-    setLogs([log, ...logs]);
-    save('m_logs', [log, ...logs]);
+    try {
+      const { data: newNote, error } = await supabase
+        .from('notes')
+        .insert([{
+          lead_id: selectedLead.id,
+          author_id: currentUser?.id,
+          content: noteText
+        }])
+        .select()
+        .single();
 
-    setNoteText('');
+      if (error) throw error;
+
+      // Add activity log
+      await supabase.from('activity_logs').insert([{
+        lead_id: selectedLead.id,
+        actor_id: currentUser?.id,
+        action_type: 'note_added',
+        description: `Note added: "${noteText.substring(0, 20)}..."`
+      }]);
+
+      setNoteText('');
+      
+      // Refresh notes locally
+      const { data: updatedNotes } = await supabase
+        .from('notes')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (updatedNotes) setNotes(updatedNotes);
+
+      // Refresh logs locally
+      const { data: updatedLogs } = await supabase
+        .from('activity_logs')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (updatedLogs) setLogs(updatedLogs);
+
+    } catch (e: any) {
+      Alert.alert("Error", e.message || "Failed to save note.");
+    }
   };
 
   // Task add
-  const handleAddTask = () => {
+  const handleAddTask = async () => {
     if (!taskText.trim() || !selectedLead) return;
-    const newTask: Task = {
-      id: `task-${Date.now()}`,
-      lead_id: selectedLead.id,
-      title: taskText,
-      due_date: new Date(Date.now() + 86400000).toLocaleDateString(),
-      is_completed: false,
-      created_at: new Date().toISOString()
-    };
-    const updated = [newTask, ...tasks];
-    setTasks(updated);
-    save('m_tasks', updated);
 
-    setTaskText('');
+    try {
+      const { error } = await supabase
+        .from('tasks')
+        .insert([{
+          lead_id: selectedLead.id,
+          assignee_id: currentUser?.id,
+          title: taskText,
+          due_date: new Date(Date.now() + 86400000).toISOString(),
+          is_completed: false
+        }]);
+
+      if (error) throw error;
+
+      setTaskText('');
+
+      // Refresh tasks locally
+      const { data: updatedTasks } = await supabase
+        .from('tasks')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (updatedTasks) setTasks(updatedTasks);
+
+    } catch (e: any) {
+      Alert.alert("Error", e.message || "Failed to schedule task.");
+    }
   };
 
   // Toggle Task Completion
-  const handleToggleTask = (id: string) => {
-    const updated = tasks.map(t => t.id === id ? { ...t, is_completed: !t.is_completed } : t);
-    setTasks(updated);
-    save('m_tasks', updated);
+  const handleToggleTask = async (id: string) => {
+    const taskToToggle = tasks.find(t => t.id === id);
+    if (!taskToToggle) return;
+    const nextCompleted = !taskToToggle.is_completed;
+
+    try {
+      const { error } = await supabase
+        .from('tasks')
+        .update({ is_completed: nextCompleted })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      // Add activity log
+      await supabase.from('activity_logs').insert([{
+        lead_id: taskToToggle.lead_id,
+        actor_id: currentUser?.id,
+        action_type: 'task_completed',
+        description: `Marked task "${taskToToggle.title}" as ${nextCompleted ? 'completed' : 'incomplete'}`
+      }]);
+
+      // Update state locally
+      setTasks(prev => prev.map(t => t.id === id ? { ...t, is_completed: nextCompleted } : t));
+    } catch (e: any) {
+      Alert.alert("Error", e.message || "Failed to toggle task.");
+    }
   };
 
   // Call & WhatsApp native actions
-  const triggerCall = (lead: Lead) => {
+  const triggerCall = async (lead: Lead) => {
     Linking.openURL(`tel:${lead.phone}`).catch(() => {
       Alert.alert("Error", "Unable to trigger dialer actions on this device.");
     });
 
-    // 1. Log call action in activity logs
-    const log: ActivityLog = {
-      id: `log-${Date.now()}`,
-      lead_id: lead.id,
-      action_type: 'call_placed',
-      description: `Placed phone call to candidate at ${lead.phone}`,
-      created_at: new Date().toISOString(),
-      actor_name: currentUser?.full_name || 'Counsellor'
-    };
-    const updatedLogs = [log, ...logs];
-    setLogs(updatedLogs);
-    save('m_logs', updatedLogs);
+    try {
+      // Log call action in activity logs
+      await supabase.from('activity_logs').insert([{
+        lead_id: lead.id,
+        actor_id: currentUser?.id,
+        action_type: 'call_placed',
+        description: `Placed phone call to candidate at ${lead.phone}`
+      }]);
+    } catch (e) {
+      console.error("Call placed logging error:", e);
+    }
 
-    // 2. Open Call Feedback Modal
+    // Open Call Feedback Modal
     setFeedbackLead(lead);
     setFeedbackNotes('');
     setFeedbackReminder(false);
     
-    // Set default reminder tomorrow at 10:00 AM
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
     setReminderDate(tomorrow.getDate().toString());
@@ -555,106 +757,107 @@ export default function App() {
     setReminderMonth((targetDate.getMonth() + 1).toString());
   };
 
-  const handleSaveFeedback = () => {
+  const handleSaveFeedback = async () => {
     if (!feedbackLead) return;
 
-    // 1. Post internal note
-    if (feedbackNotes.trim()) {
-      const newNote: Note = {
-        id: `note-${Date.now()}`,
-        lead_id: feedbackLead.id,
-        content: `[Call Log Note] ${feedbackNotes}`,
-        created_at: new Date().toISOString(),
-        author_name: currentUser?.full_name || 'Counsellor'
-      };
-      const updatedNotes = [newNote, ...notes];
-      setNotes(updatedNotes);
-      save('m_notes', updatedNotes);
+    try {
+      // 1. Post internal note
+      if (feedbackNotes.trim()) {
+        const { error: noteError } = await supabase
+          .from('notes')
+          .insert([{
+            lead_id: feedbackLead.id,
+            author_id: currentUser?.id,
+            content: `[Call Log Note] ${feedbackNotes}`
+          }]);
 
-      // Create activity log for note
-      const noteLog: ActivityLog = {
-        id: `log-${Date.now()}-note`,
-        lead_id: feedbackLead.id,
-        action_type: 'note_added',
-        description: `Note added via post-call feedback: "${feedbackNotes.substring(0, 20)}..."`,
-        created_at: new Date().toISOString(),
-        actor_name: currentUser?.full_name || 'Counsellor'
-      };
-      const updatedLogs = [noteLog, ...logs];
-      setLogs(updatedLogs);
-      save('m_logs', updatedLogs);
-    }
+        if (noteError) throw noteError;
 
-    // 2. Set Call Reminder Task
-    if (feedbackReminder) {
-      const day = parseInt(reminderDate);
-      const month = parseInt(reminderMonth);
-      if (isNaN(day) || isNaN(month) || day < 1 || day > 31 || month < 1 || month > 12) {
-        Alert.alert("Invalid Date", "Please enter a valid day (1-31) and month (1-12).");
-        return;
+        // Create activity log for note
+        await supabase.from('activity_logs').insert([{
+          lead_id: feedbackLead.id,
+          actor_id: currentUser?.id,
+          action_type: 'note_added',
+          description: `Note added via post-call feedback: "${feedbackNotes.substring(0, 20)}..."`
+        }]);
       }
-      
-      const year = new Date().getFullYear();
-      const formattedDate = `${month}/${day}/${year}`;
-      const formattedTime = `${reminderHour}:${reminderMinute} ${reminderAmPm}`;
-      
-      const newTask: Task = {
-        id: `task-${Date.now()}`,
-        lead_id: feedbackLead.id,
-        title: `Follow-up call scheduled for ${formattedTime}`,
-        due_date: `${formattedDate} ${formattedTime}`,
-        is_completed: false,
-        created_at: new Date().toISOString()
-      };
-      const updatedTasks = [newTask, ...tasks];
-      setTasks(updatedTasks);
-      save('m_tasks', updatedTasks);
 
-      // Create activity log for scheduled reminder
-      const reminderLog: ActivityLog = {
-        id: `log-${Date.now()}-reminder`,
-        lead_id: feedbackLead.id,
-        action_type: 'task_scheduled',
-        description: `Call follow-up scheduled for ${formattedDate} at ${formattedTime}`,
-        created_at: new Date().toISOString(),
-        actor_name: currentUser?.full_name || 'Counsellor'
-      };
-      const updatedLogs = [reminderLog, ...logs];
-      setLogs(updatedLogs);
-      save('m_logs', updatedLogs);
+      // 2. Set Call Reminder Task
+      if (feedbackReminder) {
+        const day = parseInt(reminderDate);
+        const month = parseInt(reminderMonth);
+        if (isNaN(day) || isNaN(month) || day < 1 || day > 31 || month < 1 || month > 12) {
+          Alert.alert("Invalid Date", "Please enter a valid day (1-31) and month (1-12).");
+          return;
+        }
+        
+        const year = new Date().getFullYear();
+        const formattedDate = `${month}/${day}/${year}`;
+        const formattedTime = `${reminderHour}:${reminderMinute} ${reminderAmPm}`;
+        const dueDate = new Date(`${formattedDate} ${formattedTime}`).toISOString();
+        
+        const { error: taskError } = await supabase
+          .from('tasks')
+          .insert([{
+            lead_id: feedbackLead.id,
+            assignee_id: currentUser?.id,
+            title: `Follow-up call scheduled for ${formattedTime}`,
+            due_date: dueDate,
+            is_completed: false
+          }]);
+
+        if (taskError) throw taskError;
+
+        // Create activity log for scheduled reminder
+        await supabase.from('activity_logs').insert([{
+          lead_id: feedbackLead.id,
+          actor_id: currentUser?.id,
+          action_type: 'task_scheduled',
+          description: `Call follow-up scheduled for ${formattedDate} at ${formattedTime}`
+        }]);
+      }
+
+      // Refresh data
+      fetchData();
+
+      setFeedbackLead(null);
+      setFeedbackNotes('');
+      setFeedbackReminder(false);
+    } catch (e: any) {
+      Alert.alert("Feedback Save Error", e.message || "Failed to schedule follow-up details.");
     }
-
-    setFeedbackLead(null);
-    setFeedbackNotes('');
-    setFeedbackReminder(false);
   };
 
-  const handleUpdateLeadField = (field: 'status' | 'assigned_counsellor_id', value: string | null) => {
+  const handleUpdateLeadField = async (field: 'status' | 'assigned_counsellor_id', value: string | null) => {
     if (!selectedLead) return;
     
-    const updatedLead = { ...selectedLead, [field]: value };
-    setSelectedLead(updatedLead);
-    
-    const updatedLeads = leads.map(l => l.id === selectedLead.id ? updatedLead : l);
-    setLeads(updatedLeads);
-    save('m_leads', updatedLeads);
+    try {
+      const { error } = await supabase
+        .from('leads')
+        .update({ [field]: value, updated_at: new Date().toISOString() })
+        .eq('id', selectedLead.id);
 
-    // Add activity log
-    const desc = field === 'status' 
-      ? `Pipeline status changed to "${value}"` 
-      : `Assigned counsellor changed to "${MOCK_PROFILES.find(p => p.id === value)?.full_name || 'Unassigned'}"`;
-      
-    const log: ActivityLog = {
-      id: `log-${Date.now()}`,
-      lead_id: selectedLead.id,
-      action_type: field === 'status' ? 'status_updated' : 'counsellor_assigned',
-      description: desc,
-      created_at: new Date().toISOString(),
-      actor_name: currentUser?.full_name || 'Counsellor'
-    };
-    const updatedLogs = [log, ...logs];
-    setLogs(updatedLogs);
-    save('m_logs', updatedLogs);
+      if (error) throw error;
+
+      // Add activity log
+      const desc = field === 'status' 
+        ? `Pipeline status changed to "${value}"` 
+        : `Assigned counsellor changed to "${MOCK_PROFILES.find(p => p.id === value)?.full_name || 'Unassigned'}"`;
+        
+      await supabase.from('activity_logs').insert([{
+        lead_id: selectedLead.id,
+        actor_id: currentUser?.id,
+        action_type: field === 'status' ? 'status_updated' : 'counsellor_assigned',
+        description: desc
+      }]);
+
+      // Update state locally
+      setSelectedLead(prev => prev ? { ...prev, [field]: value } : null);
+      setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, [field]: value } : l));
+
+    } catch (e: any) {
+      Alert.alert("Update Failed", e.message || "Could not update lead field.");
+    }
   };
 
   const renderPickerModal = () => {
@@ -841,37 +1044,80 @@ export default function App() {
   };
 
   // WhatsApp Simulation chats
-  const handleSendWhatsAppSim = () => {
+  const handleSendWhatsAppSim = async () => {
     if (!chatInput.trim() || !selectedLead) return;
-    const newMsg = {
-      id: `m-${Date.now()}`,
-      lead_id: selectedLead.id,
-      direction: 'out' as const,
-      text: chatInput,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
-    const updated = [...chatHistory, newMsg];
-    setChatHistory(updated);
-    save('m_chat', updated);
+
+    const messageText = chatInput;
     setChatInput('');
 
-    // Chatbot response simulation
-    setTimeout(() => {
-      const incoming = {
-        id: `m-${Date.now() + 1}`,
+    try {
+      // 1. Insert outgoing message to Supabase
+      const { data: newMsg, error } = await supabase
+        .from('whatsapp_history')
+        .insert([{
+          lead_id: selectedLead.id,
+          direction: 'outgoing',
+          message_text: messageText,
+          status: 'sent'
+        }])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Add activity log
+      await supabase.from('activity_logs').insert([{
         lead_id: selectedLead.id,
-        direction: 'in' as const,
-        text: "Got your message. I am currently out with my parents, but I will check the college brochures by tonight. Thank you!",
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        actor_id: currentUser?.id,
+        action_type: 'whatsapp_sent',
+        description: `Sent custom WhatsApp reply: "${messageText.substring(0, 30)}..."`
+      }]);
+
+      // Remap and update local state
+      const remappedNewMsg = {
+        id: newMsg.id,
+        lead_id: newMsg.lead_id,
+        direction: 'out' as const,
+        text: newMsg.message_text,
+        time: new Date(newMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
-      setChatHistory(prev => {
-        const next = [...prev, incoming];
-        save('m_chat', next);
-        return next;
-      });
-      // Trigger notification alert
-      Alert.alert(`📱 New reply from ${selectedLead.name}`, "Check the WhatsApp chat log in details tab.");
-    }, 2500);
+      setChatHistory(prev => [...prev, remappedNewMsg]);
+
+      // 2. Chatbot reply simulation after 2.5 seconds
+      setTimeout(async () => {
+        try {
+          const replyText = "Got your message. I am currently out with my parents, but I will check the college brochures by tonight. Thank you!";
+          
+          const { data: botMsg } = await supabase
+            .from('whatsapp_history')
+            .insert([{
+              lead_id: selectedLead.id,
+              direction: 'incoming',
+              message_text: replyText,
+              status: 'read'
+            }])
+            .select()
+            .single();
+
+          if (botMsg) {
+            const remappedIncoming = {
+              id: botMsg.id,
+              lead_id: botMsg.lead_id,
+              direction: 'in' as const,
+              text: botMsg.message_text,
+              time: new Date(botMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            };
+            setChatHistory(prev => [...prev, remappedIncoming]);
+            Alert.alert(`📱 New reply from ${selectedLead.name}`, "Check the WhatsApp chat log in details tab.");
+          }
+        } catch (botErr) {
+          console.error("Bot simulation save error:", botErr);
+        }
+      }, 2500);
+
+    } catch (e: any) {
+      Alert.alert("Error", e.message || "Failed to send simulated WhatsApp message.");
+    }
   };
 
   // Filter leads based on logged counselor
