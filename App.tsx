@@ -1824,68 +1824,25 @@ export default function App() {
       .replace('{{preferred_destination}}', lead.preferred_destination || 'Georgia/Russia');
 
     if (template.attachment_url) {
-      try {
-        setIsShareLoading(true);
-        const filename = template.attachment_name || `${template.name.replace(/\s+/g, '_')}.pdf`;
-        const localUri = FileSystem.cacheDirectory + filename;
-        
-        const fileInfo = await FileSystem.getInfoAsync(localUri);
-        if (!fileInfo.exists) {
-          console.log(`Downloading brochure from ${template.attachment_url}...`);
-          await FileSystem.downloadAsync(template.attachment_url, localUri);
-        }
-        
-        setIsShareLoading(false);
+      body += `\n\n📄 Document: ${template.attachment_url}`;
+    }
 
-        const isAvailable = await Sharing.isAvailableAsync();
-        if (!isAvailable) {
-          Alert.alert("Sharing Unsupported", "Native file sharing is not supported on this platform.");
-          return;
-        }
+    const cleanPhone = lead.phone.replace('+', '');
+    const url = `whatsapp://send?phone=${cleanPhone}&text=${encodeURIComponent(body)}`;
+    
+    Linking.openURL(url).catch(() => {
+      Linking.openURL(`https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(body)}`);
+    });
 
-        await Sharing.shareAsync(localUri, {
-          dialogTitle: `Share ${template.name} with ${lead.name}`,
-          mimeType: 'application/pdf'
-        });
-
-        await Clipboard.setString(body);
-        Alert.alert("Text Copied", "The template message text was copied to your clipboard so you can paste it directly in the WhatsApp chat.");
-
-        const cleanPhone = lead.phone.replace('+', '');
-        const url = `whatsapp://send?phone=${cleanPhone}`;
-        Linking.openURL(url).catch(() => {
-          Linking.openURL(`https://api.whatsapp.com/send?phone=${cleanPhone}`);
-        });
-
-        await supabase.from('activity_logs').insert([{
-          lead_id: lead.id,
-          actor_id: currentUser?.id,
-          action_type: 'whatsapp_sent',
-          description: `Shared Attachment: "${template.attachment_name || template.name}" and copied message body.`
-        }]);
-
-      } catch (e: any) {
-        setIsShareLoading(false);
-        console.error("Error sharing attachment:", e);
-        Alert.alert("Share Failed", e.message || "Failed to download or share the attachment.");
-      }
-    } else {
-      const cleanPhone = lead.phone.replace('+', '');
-      const url = `whatsapp://send?phone=${cleanPhone}&text=${encodeURIComponent(body)}`;
-      Linking.openURL(url).catch(() => {
-        Linking.openURL(`https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(body)}`);
-      });
-
-      try {
-        await supabase.from('activity_logs').insert([{
-          lead_id: lead.id,
-          actor_id: currentUser?.id,
-          action_type: 'whatsapp_sent',
-          description: `Sent WhatsApp template: "${template.name}"`
-        }]);
-      } catch (e) {
-        console.error("Error logging WhatsApp template sent:", e);
-      }
+    try {
+      await supabase.from('activity_logs').insert([{
+        lead_id: lead.id,
+        actor_id: currentUser?.id,
+        action_type: 'whatsapp_sent',
+        description: `Sent WhatsApp template: "${template.name}"`
+      }]);
+    } catch (e) {
+      console.error("Error logging WhatsApp template sent:", e);
     }
   };
 
