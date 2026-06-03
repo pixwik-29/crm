@@ -578,6 +578,30 @@ export default function App() {
         if (profile) {
           setCurrentUser(profile as Profile);
           await AsyncStorage.setItem('m_user', JSON.stringify(profile));
+          
+          // Cache credentials in AsyncStorage for future phone OTP logins
+          try {
+            const stored = await AsyncStorage.getItem('m_credentials');
+            const creds = stored ? JSON.parse(stored) : [];
+            const index = creds.findIndex((c: any) => c.email.toLowerCase() === cleanEmail);
+            const newCred = {
+              email: cleanEmail,
+              password: cleanPassword,
+              name: profile.full_name,
+              role: profile.role,
+              profileId: profile.id,
+              phone: profile.phone
+            };
+            if (index > -1) {
+              creds[index] = newCred;
+            } else {
+              creds.push(newCred);
+            }
+            await AsyncStorage.setItem('m_credentials', JSON.stringify(creds));
+          } catch (storageErr) {
+            console.error("Failed to cache credentials:", storageErr);
+          }
+
           setEmailInput('');
           setPasswordInput('');
         } else {
@@ -599,20 +623,53 @@ export default function App() {
     
     setIsSubmitting(true);
     const cleanInputPhone = phoneInput.replace(/\D/g, '');
-
-    const foundCred = DEFAULT_CREDENTIALS.find(c => {
-      if (!c.phone) return false;
-      const cleanCredPhone = c.phone.replace(/\D/g, '');
-      return cleanCredPhone.endsWith(cleanInputPhone) || cleanInputPhone.endsWith(cleanCredPhone);
-    });
-
-    if (!foundCred) {
-      Alert.alert("Login Failed", "This mobile number is not registered.");
-      setIsSubmitting(false);
-      return;
-    }
+    let foundCred: any = null;
 
     try {
+      // 1. Get cached credentials from AsyncStorage
+      const stored = await AsyncStorage.getItem('m_credentials');
+      const cachedCreds = stored ? JSON.parse(stored) : [];
+
+      // Combine cached credentials and DEFAULT_CREDENTIALS
+      const allCreds = [...cachedCreds];
+      DEFAULT_CREDENTIALS.forEach(d => {
+        if (!allCreds.some(c => c.email.toLowerCase() === d.email.toLowerCase())) {
+          allCreds.push(d);
+        }
+      });
+
+      const localMatch = allCreds.find(c => {
+        if (!c.phone) return false;
+        const cleanCredPhone = c.phone.replace(/\D/g, '');
+        return cleanCredPhone.endsWith(cleanInputPhone) || cleanInputPhone.endsWith(cleanCredPhone);
+      });
+
+      if (localMatch) {
+        foundCred = localMatch;
+      } else {
+        // 2. Query Supabase RPC database lookup bypassing RLS
+        const { data, error: rpcError } = await supabase.rpc('check_phone_registered', { phone_num: cleanInputPhone });
+        if (rpcError) {
+          console.error("RPC Phone Check Error:", rpcError);
+        } else if (data && data.length > 0) {
+          const matched = data[0];
+          foundCred = {
+            email: matched.email,
+            password: 'counsellor123', // default fallback password
+            name: matched.full_name,
+            role: matched.role,
+            profileId: matched.email,
+            phone: matched.phone || phoneInput
+          };
+        }
+      }
+
+      if (!foundCred) {
+        Alert.alert("Login Failed", "This mobile number is not registered.");
+        setIsSubmitting(false);
+        return;
+      }
+
       const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
       setGeneratedOtp(otpCode);
 
@@ -652,16 +709,47 @@ export default function App() {
     }
 
     if (otpInput.trim() === generatedOtp) {
+      setIsSubmitting(true);
       const cleanInputPhone = phoneInput.replace(/\D/g, '');
-      const foundCred = DEFAULT_CREDENTIALS.find(c => {
-        if (!c.phone) return false;
-        const cleanCredPhone = c.phone.replace(/\D/g, '');
-        return cleanCredPhone.endsWith(cleanInputPhone) || cleanInputPhone.endsWith(cleanCredPhone);
-      });
+      let foundCred: any = null;
 
-      if (foundCred) {
-        setIsSubmitting(true);
-        try {
+      try {
+        // Load combined credentials
+        const stored = await AsyncStorage.getItem('m_credentials');
+        const cachedCreds = stored ? JSON.parse(stored) : [];
+
+        const allCreds = [...cachedCreds];
+        DEFAULT_CREDENTIALS.forEach(d => {
+          if (!allCreds.some(c => c.email.toLowerCase() === d.email.toLowerCase())) {
+            allCreds.push(d);
+          }
+        });
+
+        const localMatch = allCreds.find(c => {
+          if (!c.phone) return false;
+          const cleanCredPhone = c.phone.replace(/\D/g, '');
+          return cleanCredPhone.endsWith(cleanInputPhone) || cleanInputPhone.endsWith(cleanCredPhone);
+        });
+
+        if (localMatch) {
+          foundCred = localMatch;
+        } else {
+          // Query dynamic database RPC fallback
+          const { data } = await supabase.rpc('check_phone_registered', { phone_num: cleanInputPhone });
+          if (data && data.length > 0) {
+            const matched = data[0];
+            foundCred = {
+              email: matched.email,
+              password: 'counsellor123',
+              name: matched.full_name,
+              role: matched.role,
+              profileId: matched.email,
+              phone: matched.phone || phoneInput
+            };
+          }
+        }
+
+        if (foundCred) {
           const { data, error } = await supabase.auth.signInWithPassword({
             email: foundCred.email,
             password: foundCred.password
@@ -692,13 +780,13 @@ export default function App() {
               Alert.alert("Profile Error", "Profile could not be found.");
             }
           }
-        } catch (e: any) {
-          Alert.alert("System Error", e.message || "Authentication error.");
-        } finally {
-          setIsSubmitting(false);
+        } else {
+          Alert.alert("System Error", "Matching credentials not found.");
         }
-      } else {
-        Alert.alert("System Error", "Matching credentials not found.");
+      } catch (e: any) {
+        Alert.alert("System Error", e.message || "Authentication error.");
+      } finally {
+        setIsSubmitting(false);
       }
     } else {
       Alert.alert("Verification Failed", "Incorrect OTP. Please enter the code sent to your mobile phone.");
