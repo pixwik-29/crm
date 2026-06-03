@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   StyleSheet, Text, View, ScrollView, TextInput, TouchableOpacity, 
-  SafeAreaView, StatusBar, ActivityIndicator, Alert, Linking, Share, Image, Platform, Clipboard 
+  SafeAreaView, StatusBar, ActivityIndicator, Alert, Linking, Share, Image, Platform, Clipboard, BackHandler 
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { 
-  Phone, MessageSquare, Mail, Tag, Award, User, Clock, Search, 
+  Phone, MessageSquare, Mail, Tag, ArrowLeft, Award, User, Clock, Search, 
   Plus, Check, LogOut, ArrowRight, Eye, Shield, Bell, PlusCircle, CheckCircle, Smartphone, Settings 
 } from 'lucide-react-native';
 import { createClient } from '@supabase/supabase-js';
@@ -503,6 +503,45 @@ export default function App() {
     };
     loadSettings();
   }, []);
+
+  // Handle Android hardware back button to navigate pages or close modals instead of exiting app
+  useEffect(() => {
+    const backAction = () => {
+      if (isAddModalOpen) {
+        setIsAddModalOpen(false);
+        return true;
+      }
+      if (isSettingsOpen) {
+        setIsSettingsOpen(false);
+        setEditingTemplateId(null);
+        setTempName('');
+        setTempBody('');
+        setTempAttachUrl('');
+        setTempAttachName('');
+        return true;
+      }
+      if (activeWhatsAppLead) {
+        setActiveWhatsAppLead(null);
+        return true;
+      }
+      if (feedbackLead) {
+        setFeedbackLead(null);
+        return true;
+      }
+      if (currentScreen === 'detail') {
+        setCurrentScreen('dashboard');
+        return true;
+      }
+      return false; // Let default back button behavior (exit app) happen
+    };
+
+    const backHandler = BackHandler.addEventListener(
+      'hardwareBackPress',
+      backAction
+    );
+
+    return () => backHandler.remove();
+  }, [currentScreen, isSettingsOpen, activeWhatsAppLead, feedbackLead, isAddModalOpen]);
 
   // Fetch live CRM data and register push notifications when session is established
   useEffect(() => {
@@ -2229,9 +2268,9 @@ export default function App() {
         <View style={[styles.detailHeader, { backgroundColor: theme.headerBg, borderBottomColor: theme.border }]}>
           <TouchableOpacity 
             onPress={() => setCurrentScreen('dashboard')}
-            style={[styles.backBtn, { backgroundColor: darkMode ? '#334155' : '#F1F5F9' }]}
+            style={[styles.backBtn, { backgroundColor: darkMode ? '#334155' : '#F1F5F9', paddingHorizontal: 10, paddingVertical: 6 }]}
           >
-            <Text style={[styles.backBtnText, { color: theme.text }]}>← Back</Text>
+            <ArrowLeft size={18} color={theme.text} />
           </TouchableOpacity>
           <Text style={[styles.detailHeaderTitle, { color: theme.text }]} numberOfLines={1}>{selectedLead.name}</Text>
           <View style={styles.scoreCircle}>
