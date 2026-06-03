@@ -21,38 +21,13 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "output": "static",
       "favicon": "./assets/favicon.png"
     },
-    "plugins": [
-      "expo-router",
-      [
-        "expo-splash-screen",
-        {
-          "backgroundColor": "#208AEF",
-          "android": {
-            "image": "./assets/splash-icon.png",
-            "imageWidth": 76
-          }
-        }
-      ]
-    ],
-    "experiments": {
-      "typedRoutes": true,
-      "reactCompiler": true
-    },
     "extra": {
-      "router": {},
       "eas": {
         "projectId": "13d4d5f3-78e7-444f-9e40-fcfdc281b17e"
       }
     },
-    "owner": "nashnewton",
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
-    "updates": {
-      "url": "https://u.expo.dev/13d4d5f3-78e7-444f-9e40-fcfdc281b17e"
-    }
+    "owner": "nashnewton"
   }
 }
