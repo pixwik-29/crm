@@ -1797,7 +1797,13 @@ export default function App() {
 
   const sendDirectWhatsAppText = async (lead: Lead) => {
     const welcomeText = `Hello ${lead.name}, thank you for reaching out to MBBS consultancy...`;
-    const cleanPhone = lead.phone.replace('+', '');
+    const targetPhone = lead.whatsapp_number || lead.phone;
+    let cleanPhone = targetPhone.replace(/[^0-9]/g, '');
+    if (cleanPhone.length === 10) {
+      cleanPhone = `91${cleanPhone}`;
+    } else if (cleanPhone.length === 11 && cleanPhone.startsWith('0')) {
+      cleanPhone = `91${cleanPhone.substring(1)}`;
+    }
     const url = `whatsapp://send?phone=${cleanPhone}&text=${encodeURIComponent(welcomeText)}`;
     Linking.openURL(url).catch(() => {
       // Fallback web url
@@ -1827,7 +1833,13 @@ export default function App() {
       body += `\n\n📄 Document: ${template.attachment_url}`;
     }
 
-    const cleanPhone = lead.phone.replace('+', '');
+    const targetPhone = lead.whatsapp_number || lead.phone;
+    let cleanPhone = targetPhone.replace(/[^0-9]/g, '');
+    if (cleanPhone.length === 10) {
+      cleanPhone = `91${cleanPhone}`;
+    } else if (cleanPhone.length === 11 && cleanPhone.startsWith('0')) {
+      cleanPhone = `91${cleanPhone.substring(1)}`;
+    }
     const url = `whatsapp://send?phone=${cleanPhone}&text=${encodeURIComponent(body)}`;
     
     Linking.openURL(url).catch(() => {
