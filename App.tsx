@@ -1,16 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   StyleSheet, Text, View, ScrollView, TextInput, TouchableOpacity, 
-  SafeAreaView, StatusBar, ActivityIndicator, Alert, Linking, Share, Image, Platform 
+  SafeAreaView, StatusBar, ActivityIndicator, Alert, Linking, Share, Image, Platform, Clipboard 
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { 
   Phone, MessageSquare, Mail, Tag, Award, User, Clock, Search, 
-  Plus, Check, LogOut, ArrowRight, Eye, Shield, Bell, PlusCircle, CheckCircle, Smartphone 
+  Plus, Check, LogOut, ArrowRight, Eye, Shield, Bell, PlusCircle, CheckCircle, Smartphone, Settings 
 } from 'lucide-react-native';
 import { createClient } from '@supabase/supabase-js';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 
 const supabaseUrl = 'https://gkayyfwadwwsucpqeefw.supabase.co';
 const supabaseAnonKey = 'sb_publishable_VLg-MNbQe3Q7VrBG_ldcrA_cyTJ7lEv';
@@ -197,6 +199,70 @@ const INITIAL_LEADS: Lead[] = [
   }
 ];
 
+export interface BrochureTemplate {
+  id: string;
+  name: string;
+  filename: string;
+  url: string;
+}
+
+export interface WhatsAppTemplate {
+  id: string;
+  name: string;
+  body: string;
+  attachment_url?: string;
+  attachment_name?: string;
+  created_at: string;
+}
+
+export const DEFAULT_TEMPLATES: WhatsAppTemplate[] = [
+  {
+    id: 'welcome',
+    name: 'Welcome Message',
+    body: 'Hello {{lead_name}}, thank you for reaching out to MBBS Admission Consultancy. We have received your query for studying MBBS in {{preferred_destination}}. A counsellor will get in touch with you shortly.',
+    created_at: new Date().toISOString()
+  },
+  {
+    id: 'neet-followup',
+    name: 'Follow-up NEET Marks',
+    body: 'Dear {{lead_name}}, we noticed you scored {{neet_marks}} in NEET. We have excellent medical college options within your budget of {{budget}} in {{preferred_destination}}. Let us know a good time to connect!',
+    created_at: new Date().toISOString()
+  },
+  {
+    id: 'docs-checklist',
+    name: 'Document Checklist',
+    body: 'Hi {{lead_name}}, please share your 10th and 12th marksheet along with your NEET scorecard so we can begin the eligibility assessment process.',
+    created_at: new Date().toISOString()
+  }
+];
+
+export const BROCHURE_TEMPLATES: BrochureTemplate[] = [
+  {
+    id: 'general',
+    name: 'General Perfect Scholar Brochure',
+    filename: 'Perfect_Scholar_General_Brochure.pdf',
+    url: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'
+  },
+  {
+    id: 'georgia',
+    name: 'MBBS in Georgia Guide',
+    filename: 'MBBS_Georgia_Brochure.pdf',
+    url: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'
+  },
+  {
+    id: 'russia',
+    name: 'MBBS in Russia Guide',
+    filename: 'MBBS_Russia_Brochure.pdf',
+    url: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'
+  },
+  {
+    id: 'guidelines',
+    name: 'MBBS Admission Process & Guidelines',
+    filename: 'MBBS_Admission_Guidelines.pdf',
+    url: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'
+  }
+];
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState<Profile | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -257,6 +323,25 @@ export default function App() {
   // Search State
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStageFilter, setSelectedStageFilter] = useState<string>('All');
+
+  // Settings States
+  const [darkMode, setDarkMode] = useState(false);
+  const [notifyNewLeads, setNotifyNewLeads] = useState(true);
+  const [notifyTasks, setNotifyTasks] = useState(true);
+  const [notifyWhatsApp, setNotifyWhatsApp] = useState(true);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // Brochure Sharing States
+  const [activeWhatsAppLead, setActiveWhatsAppLead] = useState<Lead | null>(null);
+  const [isShareLoading, setIsShareLoading] = useState(false);
+
+  // WhatsApp Template States
+  const [whatsappTemplates, setWhatsappTemplates] = useState<WhatsAppTemplate[]>(DEFAULT_TEMPLATES);
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [tempName, setTempName] = useState('');
+  const [tempBody, setTempBody] = useState('');
+  const [tempAttachUrl, setTempAttachUrl] = useState('');
+  const [tempAttachName, setTempAttachName] = useState('');
 
   // Fetch all live data from Supabase
   const fetchData = async () => {
@@ -325,6 +410,14 @@ export default function App() {
       setChatHistory(remappedChat);
       await AsyncStorage.setItem('m_chat', JSON.stringify(remappedChat));
 
+      // 6. Fetch WhatsApp templates
+      const { data: templatesData, error: templatesError } = await supabase
+        .from('whatsapp_templates')
+        .select('*');
+      if (templatesError) throw templatesError;
+      setWhatsappTemplates((templatesData || []) as WhatsAppTemplate[]);
+      await AsyncStorage.setItem('m_whatsapp_templates', JSON.stringify(templatesData || []));
+
     } catch (e: any) {
       console.error("Supabase data fetch error: ", e);
       Alert.alert("Sync Notice", "Failed to sync with server. Running in offline cached mode.");
@@ -336,6 +429,7 @@ export default function App() {
       const cachedTasks = await AsyncStorage.getItem('m_tasks');
       const cachedLogs = await AsyncStorage.getItem('m_logs');
       const cachedChat = await AsyncStorage.getItem('m_chat');
+      const cachedTemplates = await AsyncStorage.getItem('m_whatsapp_templates');
 
       if (cachedProfiles) setProfiles(JSON.parse(cachedProfiles));
       if (cachedLeads) setLeads(JSON.parse(cachedLeads));
@@ -343,6 +437,11 @@ export default function App() {
       if (cachedTasks) setTasks(JSON.parse(cachedTasks));
       if (cachedLogs) setLogs(JSON.parse(cachedLogs));
       if (cachedChat) setChatHistory(JSON.parse(cachedChat));
+      if (cachedTemplates) {
+        setWhatsappTemplates(JSON.parse(cachedTemplates));
+      } else {
+        setWhatsappTemplates(DEFAULT_TEMPLATES);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -383,6 +482,28 @@ export default function App() {
     checkSession();
   }, []);
 
+  // Load settings on mount
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const savedDark = await AsyncStorage.getItem('settings_darkMode');
+        if (savedDark !== null) setDarkMode(savedDark === 'true');
+        
+        const savedNewLeads = await AsyncStorage.getItem('settings_notifyNewLeads');
+        if (savedNewLeads !== null) setNotifyNewLeads(savedNewLeads === 'true');
+        
+        const savedTasks = await AsyncStorage.getItem('settings_notifyTasks');
+        if (savedTasks !== null) setNotifyTasks(savedTasks === 'true');
+        
+        const savedWhatsApp = await AsyncStorage.getItem('settings_notifyWhatsApp');
+        if (savedWhatsApp !== null) setNotifyWhatsApp(savedWhatsApp === 'true');
+      } catch (e) {
+        console.error('Error loading settings', e);
+      }
+    };
+    loadSettings();
+  }, []);
+
   // Fetch live CRM data and register push notifications when session is established
   useEffect(() => {
     if (currentUser) {
@@ -400,12 +521,21 @@ export default function App() {
         }
       };
 
-      registerForPushNotificationsAsync().then(token => {
-        if (token) {
-          console.log("Expo Push Token:", token);
-          savePushToken(token, currentUser.id);
+      const checkAndRegisterPush = async () => {
+        const savedNewLeads = await AsyncStorage.getItem('settings_notifyNewLeads');
+        const isEnabled = savedNewLeads === null || savedNewLeads === 'true';
+        if (isEnabled) {
+          registerForPushNotificationsAsync().then(token => {
+            if (token) {
+              console.log("Expo Push Token:", token);
+              savePushToken(token, currentUser.id);
+            }
+          });
+        } else {
+          savePushToken(null as any, currentUser.id);
         }
-      });
+      };
+      checkAndRegisterPush();
     }
   }, [currentUser]);
 
@@ -584,6 +714,169 @@ export default function App() {
     }
     setCurrentUser(null);
     await AsyncStorage.removeItem('m_user');
+  };
+
+  const handleSaveSettings = async (
+    newDarkMode: boolean,
+    newNewLeads: boolean,
+    newTasks: boolean,
+    newWhatsApp: boolean
+  ) => {
+    try {
+      setDarkMode(newDarkMode);
+      setNotifyNewLeads(newNewLeads);
+      setNotifyTasks(newTasks);
+      setNotifyWhatsApp(newWhatsApp);
+
+      await AsyncStorage.setItem('settings_darkMode', String(newDarkMode));
+      await AsyncStorage.setItem('settings_notifyNewLeads', String(newNewLeads));
+      await AsyncStorage.setItem('settings_notifyTasks', String(newTasks));
+      await AsyncStorage.setItem('settings_notifyWhatsApp', String(newWhatsApp));
+
+      if (currentUser) {
+        if (!newNewLeads) {
+          // Clear push token from database so they don't receive new lead notifications
+          await supabase
+            .from('profiles')
+            .update({ push_token: null })
+            .eq('id', currentUser.id);
+        } else {
+          // Register push token and save it
+          const token = await registerForPushNotificationsAsync();
+          if (token) {
+            await supabase
+              .from('profiles')
+              .update({ push_token: token })
+              .eq('id', currentUser.id);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Error saving settings:", e);
+      Alert.alert("Error", "Failed to save settings.");
+    }
+  };
+
+  const handleSaveTemplate = async () => {
+    if (!tempName.trim() || !tempBody.trim()) {
+      Alert.alert("Error", "Template Name and Message Body are required.");
+      return;
+    }
+
+    try {
+      if (editingTemplateId) {
+        const { data, error } = await supabase
+          .from('whatsapp_templates')
+          .update({
+            name: tempName.trim(),
+            body: tempBody.trim(),
+            attachment_url: tempAttachUrl.trim() || null,
+            attachment_name: tempAttachName.trim() || null
+          })
+          .eq('id', editingTemplateId)
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        const updated = whatsappTemplates.map(t => t.id === editingTemplateId ? (data as WhatsAppTemplate) : t);
+        setWhatsappTemplates(updated);
+        await AsyncStorage.setItem('m_whatsapp_templates', JSON.stringify(updated));
+        Alert.alert("Success", "Template updated successfully.");
+      } else {
+        const { data, error } = await supabase
+          .from('whatsapp_templates')
+          .insert([{
+            name: tempName.trim(),
+            body: tempBody.trim(),
+            attachment_url: tempAttachUrl.trim() || null,
+            attachment_name: tempAttachName.trim() || null
+          }])
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        const updated = [...whatsappTemplates, data as WhatsAppTemplate];
+        setWhatsappTemplates(updated);
+        await AsyncStorage.setItem('m_whatsapp_templates', JSON.stringify(updated));
+        Alert.alert("Success", "Template created successfully.");
+      }
+
+      // Reset form
+      setEditingTemplateId(null);
+      setTempName('');
+      setTempBody('');
+      setTempAttachUrl('');
+      setTempAttachName('');
+    } catch (e: any) {
+      console.error("Error saving template:", e);
+      // Local fallback if offline
+      if (editingTemplateId) {
+        const updated = whatsappTemplates.map(t => {
+          if (t.id === editingTemplateId) {
+            return {
+              ...t,
+              name: tempName.trim(),
+              body: tempBody.trim(),
+              attachment_url: tempAttachUrl.trim() || undefined,
+              attachment_name: tempAttachName.trim() || undefined
+            };
+          }
+          return t;
+        });
+        setWhatsappTemplates(updated);
+        await AsyncStorage.setItem('m_whatsapp_templates', JSON.stringify(updated));
+        Alert.alert("Offline Success", "Template updated locally.");
+      } else {
+        const newT = {
+          id: `temp-${Date.now()}`,
+          name: tempName.trim(),
+          body: tempBody.trim(),
+          attachment_url: tempAttachUrl.trim() || undefined,
+          attachment_name: tempAttachName.trim() || undefined,
+          created_at: new Date().toISOString()
+        };
+        const updated = [...whatsappTemplates, newT];
+        setWhatsappTemplates(updated);
+        await AsyncStorage.setItem('m_whatsapp_templates', JSON.stringify(updated));
+        Alert.alert("Offline Success", "Template created locally.");
+      }
+      setEditingTemplateId(null);
+      setTempName('');
+      setTempBody('');
+      setTempAttachUrl('');
+      setTempAttachName('');
+    }
+  };
+
+  const handleDeleteTemplate = async (id: string) => {
+    Alert.alert(
+      "Confirm Delete",
+      "Are you sure you want to delete this template?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const { error } = await supabase
+                .from('whatsapp_templates')
+                .delete()
+                .eq('id', id);
+              if (error) throw error;
+            } catch (e) {
+              console.log("Delete template offline or database issue: ", e);
+            }
+            const updated = whatsappTemplates.filter(t => t.id !== id);
+            setWhatsappTemplates(updated);
+            await AsyncStorage.setItem('m_whatsapp_templates', JSON.stringify(updated));
+            Alert.alert("Success", "Template deleted.");
+          }
+        }
+      ]
+    );
   };
 
   // Lead additions
@@ -1106,14 +1399,481 @@ export default function App() {
     );
   };
 
-  const triggerWhatsApp = (phone: string, name: string) => {
-    const welcomeText = `Hello ${name}, thank you for reaching out to MBBS consultancy...`;
-    const cleanPhone = phone.replace('+', '');
+  const renderSettingsModal = () => {
+    if (!isSettingsOpen) return null;
+    return (
+      <View style={styles.settingsModalOverlay}>
+        <View style={[styles.settingsModalContent, { backgroundColor: theme.cardBg, borderColor: theme.border, maxHeight: '85%' }]}>
+          <Text style={[styles.settingsTitle, { color: theme.text }]}>App Settings</Text>
+          
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 15 }} keyboardShouldPersistTaps="handled">
+            {/* Theme Mode Option */}
+            <View style={[styles.settingsOptionRow, { borderBottomColor: theme.border }]}>
+              <View>
+                <Text style={[styles.settingsOptionTitle, { color: theme.text }]}>Dark Mode</Text>
+                <Text style={[styles.settingsOptionSub, { color: theme.textMuted }]}>Use high contrast dark theme</Text>
+              </View>
+              <TouchableOpacity 
+                style={[styles.customToggle, darkMode && styles.customToggleActive]}
+                onPress={() => handleSaveSettings(!darkMode, notifyNewLeads, notifyTasks, notifyWhatsApp)}
+              >
+                <View style={[styles.customToggleCircle, darkMode && styles.customToggleCircleActive]} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Notifications Title */}
+            <Text style={styles.settingsSectionTitle}>Push Notifications</Text>
+
+            {/* New Leads Notification */}
+            <View style={[styles.settingsOptionRow, { borderBottomColor: theme.border }]}>
+              <View>
+                <Text style={[styles.settingsOptionTitle, { color: theme.text }]}>New Leads Ingestion</Text>
+                <Text style={[styles.settingsOptionSub, { color: theme.textMuted }]}>Alert when a new candidate enters</Text>
+              </View>
+              <TouchableOpacity 
+                style={[styles.customToggle, notifyNewLeads && styles.customToggleActive]}
+                onPress={() => handleSaveSettings(darkMode, !notifyNewLeads, notifyTasks, notifyWhatsApp)}
+              >
+                <View style={[styles.customToggleCircle, notifyNewLeads && styles.customToggleCircleActive]} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Task Reminders Notification */}
+            <View style={[styles.settingsOptionRow, { borderBottomColor: theme.border }]}>
+              <View>
+                <Text style={[styles.settingsOptionTitle, { color: theme.text }]}>Task Reminders</Text>
+                <Text style={[styles.settingsOptionSub, { color: theme.textMuted }]}>Alerts for daily follow-up duties</Text>
+              </View>
+              <TouchableOpacity 
+                style={[styles.customToggle, notifyTasks && styles.customToggleActive]}
+                onPress={() => handleSaveSettings(darkMode, notifyNewLeads, !notifyTasks, notifyWhatsApp)}
+              >
+                <View style={[styles.customToggleCircle, notifyTasks && styles.customToggleCircleActive]} />
+              </TouchableOpacity>
+            </View>
+
+            {/* WhatsApp Communications Notification */}
+            <View style={[styles.settingsOptionRow, { borderBottomColor: theme.border, marginBottom: 15 }]}>
+              <View>
+                <Text style={[styles.settingsOptionTitle, { color: theme.text }]}>WhatsApp History</Text>
+                <Text style={[styles.settingsOptionSub, { color: theme.textMuted }]}>Alert when chat updates occur</Text>
+              </View>
+              <TouchableOpacity 
+                style={[styles.customToggle, notifyWhatsApp && styles.customToggleActive]}
+                onPress={() => handleSaveSettings(darkMode, notifyNewLeads, notifyTasks, !notifyWhatsApp)}
+              >
+                <View style={[styles.customToggleCircle, notifyWhatsApp && styles.customToggleCircleActive]} />
+              </TouchableOpacity>
+            </View>
+
+            {/* WhatsApp Template Management Section */}
+            <Text style={styles.settingsSectionTitle}>WhatsApp Message Templates</Text>
+
+            {/* List of existing templates */}
+            <View style={{ marginTop: 5 }}>
+              {whatsappTemplates.map(tpl => (
+                <View 
+                  key={tpl.id} 
+                  style={{ 
+                    backgroundColor: theme.inputBg, 
+                    borderColor: theme.border, 
+                    borderWidth: 1, 
+                    borderRadius: 12, 
+                    padding: 10, 
+                    marginBottom: 10 
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ color: theme.text, fontSize: 12, fontWeight: 'bold' }}>{tpl.name}</Text>
+                    
+                    {/* Edit/Delete Buttons (Admin/Manager only) */}
+                    {(currentUser?.role === 'admin' || currentUser?.role === 'manager') && (
+                      <View style={{ flexDirection: 'row', gap: 10 }}>
+                        <TouchableOpacity 
+                          onPress={() => {
+                            setEditingTemplateId(tpl.id);
+                            setTempName(tpl.name);
+                            setTempBody(tpl.body);
+                            setTempAttachUrl(tpl.attachment_url || '');
+                            setTempAttachName(tpl.attachment_name || '');
+                          }}
+                        >
+                          <Text style={{ color: '#4F46E5', fontSize: 11, fontWeight: 'bold' }}>Edit</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => handleDeleteTemplate(tpl.id)}>
+                          <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: 'bold' }}>Delete</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={{ color: theme.textMuted, fontSize: 11, marginTop: 4 }} numberOfLines={2}>
+                    {tpl.body}
+                  </Text>
+                  {tpl.attachment_url && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 4 }}>
+                      <Text style={{ color: '#10B981', fontSize: 10, fontWeight: 'bold' }}>📎 Attachment:</Text>
+                      <Text style={{ color: theme.textMuted, fontSize: 10, flex: 1 }} numberOfLines={1}>
+                        {tpl.attachment_name || 'Unnamed'}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              ))}
+            </View>
+
+            {/* Form to Create/Edit Templates */}
+            {(currentUser?.role === 'admin' || currentUser?.role === 'manager') && (
+              <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: theme.border, paddingTop: 15 }}>
+                <Text style={{ color: theme.text, fontSize: 12, fontWeight: 'bold', marginBottom: 10 }}>
+                  {editingTemplateId ? 'Edit Template' : 'Add New Template'}
+                </Text>
+                
+                <Text style={{ color: theme.textMuted, fontSize: 10, marginBottom: 4 }}>Template Name</Text>
+                <TextInput
+                  style={{ 
+                    backgroundColor: theme.inputBg, 
+                    borderColor: theme.border, 
+                    borderWidth: 1, 
+                    borderRadius: 10, 
+                    padding: 8, 
+                    fontSize: 12, 
+                    color: theme.text, 
+                    marginBottom: 10 
+                  }}
+                  placeholder="Template Name"
+                  placeholderTextColor={theme.textMuted}
+                  value={tempName}
+                  onChangeText={setTempName}
+                />
+
+                <Text style={{ color: theme.textMuted, fontSize: 10, marginBottom: 4 }}>Message Body</Text>
+                <TextInput
+                  style={{ 
+                    backgroundColor: theme.inputBg, 
+                    borderColor: theme.border, 
+                    borderWidth: 1, 
+                    borderRadius: 10, 
+                    padding: 8, 
+                    fontSize: 12, 
+                    color: theme.text, 
+                    marginBottom: 10,
+                    height: 60,
+                    textAlignVertical: 'top'
+                  }}
+                  multiline={true}
+                  placeholder="Message body text..."
+                  placeholderTextColor={theme.textMuted}
+                  value={tempBody}
+                  onChangeText={setTempBody}
+                />
+
+                <Text style={{ color: theme.textMuted, fontSize: 10, marginBottom: 4 }}>Attachment URL (Optional PDF/Image)</Text>
+                <TextInput
+                  style={{ 
+                    backgroundColor: theme.inputBg, 
+                    borderColor: theme.border, 
+                    borderWidth: 1, 
+                    borderRadius: 10, 
+                    padding: 8, 
+                    fontSize: 12, 
+                    color: theme.text, 
+                    marginBottom: 10 
+                  }}
+                  placeholder="https://example.com/brochure.pdf"
+                  placeholderTextColor={theme.textMuted}
+                  value={tempAttachUrl}
+                  onChangeText={setTempAttachUrl}
+                />
+
+                <Text style={{ color: theme.textMuted, fontSize: 10, marginBottom: 4 }}>Attachment File Name (Optional)</Text>
+                <TextInput
+                  style={{ 
+                    backgroundColor: theme.inputBg, 
+                    borderColor: theme.border, 
+                    borderWidth: 1, 
+                    borderRadius: 10, 
+                    padding: 8, 
+                    fontSize: 12, 
+                    color: theme.text, 
+                    marginBottom: 12 
+                  }}
+                  placeholder="MBBS_Russia.pdf"
+                  placeholderTextColor={theme.textMuted}
+                  value={tempAttachName}
+                  onChangeText={setTempAttachName}
+                />
+
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TouchableOpacity 
+                    style={{ 
+                      flex: 1, 
+                      backgroundColor: '#4F46E5', 
+                      borderRadius: 10, 
+                      paddingVertical: 10, 
+                      alignItems: 'center' 
+                    }}
+                    onPress={handleSaveTemplate}
+                  >
+                    <Text style={{ color: '#FFF', fontSize: 11, fontWeight: 'bold' }}>
+                      {editingTemplateId ? 'Update' : 'Add Template'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {editingTemplateId && (
+                    <TouchableOpacity 
+                      style={{ 
+                        backgroundColor: theme.inputBg, 
+                        borderColor: theme.border, 
+                        borderWidth: 1, 
+                        borderRadius: 10, 
+                        paddingHorizontal: 15, 
+                        justifyContent: 'center' 
+                      }}
+                      onPress={() => {
+                        setEditingTemplateId(null);
+                        setTempName('');
+                        setTempBody('');
+                        setTempAttachUrl('');
+                        setTempAttachName('');
+                      }}
+                    >
+                      <Text style={{ color: theme.text, fontSize: 11 }}>Cancel</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            )}
+          </ScrollView>
+
+          {/* Dismiss Button */}
+          <TouchableOpacity 
+            style={styles.closeSettingsBtn} 
+            onPress={() => {
+              setIsSettingsOpen(false);
+              setEditingTemplateId(null);
+              setTempName('');
+              setTempBody('');
+              setTempAttachUrl('');
+              setTempAttachName('');
+            }}
+          >
+            <Text style={styles.closeSettingsBtnText}>Close & Save Preferences</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
+  const triggerWhatsApp = (lead: Lead) => {
+    setActiveWhatsAppLead(lead);
+  };
+
+  const sendDirectWhatsAppText = async (lead: Lead) => {
+    const welcomeText = `Hello ${lead.name}, thank you for reaching out to MBBS consultancy...`;
+    const cleanPhone = lead.phone.replace('+', '');
     const url = `whatsapp://send?phone=${cleanPhone}&text=${encodeURIComponent(welcomeText)}`;
     Linking.openURL(url).catch(() => {
       // Fallback web url
       Linking.openURL(`https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(welcomeText)}`);
     });
+
+    try {
+      await supabase.from('activity_logs').insert([{
+        lead_id: lead.id,
+        actor_id: currentUser?.id,
+        action_type: 'whatsapp_sent',
+        description: `Opened direct WhatsApp chat with welcome message`
+      }]);
+    } catch (e) {
+      console.error("Error logging direct WhatsApp text:", e);
+    }
+  };
+
+  const sendWhatsAppTemplate = async (template: WhatsAppTemplate, lead: Lead) => {
+    let body = template.body
+      .replace('{{lead_name}}', lead.name)
+      .replace('{{neet_marks}}', String(lead.neet_marks || 200))
+      .replace('{{budget}}', lead.budget ? `${(lead.budget / 100000).toFixed(1)} Lakh` : '40 Lakh')
+      .replace('{{preferred_destination}}', lead.preferred_destination || 'Georgia/Russia');
+
+    if (template.attachment_url) {
+      try {
+        setIsShareLoading(true);
+        const filename = template.attachment_name || `${template.name.replace(/\s+/g, '_')}.pdf`;
+        const localUri = FileSystem.cacheDirectory + filename;
+        
+        const fileInfo = await FileSystem.getInfoAsync(localUri);
+        if (!fileInfo.exists) {
+          console.log(`Downloading brochure from ${template.attachment_url}...`);
+          await FileSystem.downloadAsync(template.attachment_url, localUri);
+        }
+        
+        setIsShareLoading(false);
+
+        const isAvailable = await Sharing.isAvailableAsync();
+        if (!isAvailable) {
+          Alert.alert("Sharing Unsupported", "Native file sharing is not supported on this platform.");
+          return;
+        }
+
+        await Sharing.shareAsync(localUri, {
+          dialogTitle: `Share ${template.name} with ${lead.name}`,
+          mimeType: 'application/pdf'
+        });
+
+        await Clipboard.setString(body);
+        Alert.alert("Text Copied", "The template message text was copied to your clipboard so you can paste it directly in the WhatsApp chat.");
+
+        const cleanPhone = lead.phone.replace('+', '');
+        const url = `whatsapp://send?phone=${cleanPhone}`;
+        Linking.openURL(url).catch(() => {
+          Linking.openURL(`https://api.whatsapp.com/send?phone=${cleanPhone}`);
+        });
+
+        await supabase.from('activity_logs').insert([{
+          lead_id: lead.id,
+          actor_id: currentUser?.id,
+          action_type: 'whatsapp_sent',
+          description: `Shared Attachment: "${template.attachment_name || template.name}" and copied message body.`
+        }]);
+
+      } catch (e: any) {
+        setIsShareLoading(false);
+        console.error("Error sharing attachment:", e);
+        Alert.alert("Share Failed", e.message || "Failed to download or share the attachment.");
+      }
+    } else {
+      const cleanPhone = lead.phone.replace('+', '');
+      const url = `whatsapp://send?phone=${cleanPhone}&text=${encodeURIComponent(body)}`;
+      Linking.openURL(url).catch(() => {
+        Linking.openURL(`https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(body)}`);
+      });
+
+      try {
+        await supabase.from('activity_logs').insert([{
+          lead_id: lead.id,
+          actor_id: currentUser?.id,
+          action_type: 'whatsapp_sent',
+          description: `Sent WhatsApp template: "${template.name}"`
+        }]);
+      } catch (e) {
+        console.error("Error logging WhatsApp template sent:", e);
+      }
+    }
+  };
+
+  const shareBrochurePdf = async (brochure: BrochureTemplate, lead: Lead) => {
+    try {
+      setIsShareLoading(true);
+      const localUri = FileSystem.cacheDirectory + brochure.filename;
+      
+      const fileInfo = await FileSystem.getInfoAsync(localUri);
+      if (!fileInfo.exists) {
+        console.log(`Downloading brochure from ${brochure.url}...`);
+        await FileSystem.downloadAsync(brochure.url, localUri);
+      }
+      
+      setIsShareLoading(false);
+
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (!isAvailable) {
+        Alert.alert("Sharing Unsupported", "Native file sharing is not supported on this platform.");
+        return;
+      }
+
+      await Sharing.shareAsync(localUri, {
+        dialogTitle: `Share ${brochure.name} with ${lead.name}`,
+        mimeType: 'application/pdf'
+      });
+
+      await supabase.from('activity_logs').insert([{
+        lead_id: lead.id,
+        actor_id: currentUser?.id,
+        action_type: 'whatsapp_sent',
+        description: `Shared PDF Brochure: "${brochure.name}"`
+      }]);
+    } catch (e: any) {
+      setIsShareLoading(false);
+      console.error("Error sharing brochure:", e);
+      Alert.alert("Share Failed", e.message || "Failed to download or share the brochure.");
+    }
+  };
+
+  const renderWhatsAppModal = () => {
+    if (!activeWhatsAppLead) return null;
+    return (
+      <View style={styles.settingsModalOverlay}>
+        <View style={[styles.settingsModalContent, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+          <Text style={[styles.settingsTitle, { color: theme.text }]}>Share via WhatsApp</Text>
+          <Text style={{ color: theme.textMuted, fontSize: 11, marginBottom: 20 }}>
+            Choose a brochure or text template to send to {activeWhatsAppLead.name} ({activeWhatsAppLead.phone})
+          </Text>
+
+          {/* Option 1: Direct Text Message */}
+          <TouchableOpacity 
+            style={[styles.brochureOptionBtn, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', borderColor: darkMode ? '#475569' : '#C7D2FE' }]}
+            onPress={() => {
+              sendDirectWhatsAppText(activeWhatsAppLead);
+              setActiveWhatsAppLead(null);
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <MessageSquare size={18} color="#4F46E5" />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.brochureOptionTitle, { color: theme.text }]}>Direct Text Message Only</Text>
+                <Text style={[styles.brochureOptionSub, { color: theme.textMuted }]}>Send instant welcome text message</Text>
+              </View>
+            </View>
+          </TouchableOpacity>
+
+          <Text style={[styles.settingsSectionTitle, { marginTop: 15, marginBottom: 8 }]}>Custom Templates & Attachments</Text>
+
+          {/* Templates list wrapped in ScrollView */}
+          <ScrollView style={{ maxHeight: 240, width: '100%' }} nestedScrollEnabled={true}>
+            {whatsappTemplates.map(template => (
+              <TouchableOpacity 
+                key={template.id}
+                style={[styles.brochureOptionBtn, { backgroundColor: theme.inputBg, borderColor: theme.border }]}
+                onPress={() => {
+                  sendWhatsAppTemplate(template, activeWhatsAppLead);
+                  setActiveWhatsAppLead(null);
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  {template.attachment_url ? (
+                    <PlusCircle size={18} color="#10B981" />
+                  ) : (
+                    <MessageSquare size={18} color="#4F46E5" />
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.brochureOptionTitle, { color: theme.text }]}>{template.name}</Text>
+                    <Text style={[styles.brochureOptionSub, { color: theme.textMuted }]} numberOfLines={1}>
+                      {template.attachment_url ? `📎 ${template.attachment_name || 'Attachment'}` : template.body}
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          {/* Cancel Button */}
+          <TouchableOpacity 
+            style={[styles.closeSettingsBtn, { backgroundColor: '#EF4444', marginTop: 15 }]} 
+            onPress={() => setActiveWhatsAppLead(null)}
+          >
+            <Text style={styles.closeSettingsBtnText}>Dismiss / Cancel</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Global Share loading spinner */}
+        {isShareLoading && (
+          <View style={styles.shareLoadingOverlay}>
+            <ActivityIndicator size="large" color="#4F46E5" />
+            <Text style={{ color: '#FFF', marginTop: 10, fontWeight: 'bold', fontSize: 12 }}>Preparing attachment file...</Text>
+          </View>
+        )}
+      </View>
+    );
   };
 
   // WhatsApp Simulation chats
@@ -1205,6 +1965,20 @@ export default function App() {
     const matchesStage = selectedStageFilter === 'All' || l.status === selectedStageFilter;
     return matchesSearch && matchesStage;
   });
+
+  const theme = {
+    bg: darkMode ? '#0F172A' : '#F8FAFC',
+    cardBg: darkMode ? '#1E293B' : '#FFFFFF',
+    text: darkMode ? '#F1F5F9' : '#0F172A',
+    textMuted: darkMode ? '#94A3B8' : '#64748B',
+    border: darkMode ? '#334155' : '#E2E8F0',
+    headerBg: darkMode ? '#1E293B' : '#FFFFFF',
+    inputBg: darkMode ? '#334155' : '#FFFFFF',
+    inputText: darkMode ? '#F1F5F9' : '#0F172A',
+    inputBorder: darkMode ? '#475569' : '#CBD5E1',
+    pipelineTabBg: darkMode ? '#334155' : '#EEF2FF',
+    leadCardBg: darkMode ? '#1E293B' : '#FFFFFF',
+  };
 
   if (isLoading) {
     return (
@@ -1361,70 +2135,70 @@ export default function App() {
     const leadChats = chatHistory.filter(c => c.lead_id === selectedLead.id);
 
     return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="dark-content" />
+      <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
+        <StatusBar barStyle={darkMode ? "light-content" : "dark-content"} />
         {/* Detail Header */}
-        <View style={styles.detailHeader}>
+        <View style={[styles.detailHeader, { backgroundColor: theme.headerBg, borderBottomColor: theme.border }]}>
           <TouchableOpacity 
             onPress={() => setCurrentScreen('dashboard')}
-            style={styles.backBtn}
+            style={[styles.backBtn, { backgroundColor: darkMode ? '#334155' : '#F1F5F9' }]}
           >
-            <Text style={styles.backBtnText}>← Back</Text>
+            <Text style={[styles.backBtnText, { color: theme.text }]}>← Back</Text>
           </TouchableOpacity>
-          <Text style={styles.detailHeaderTitle} numberOfLines={1}>{selectedLead.name}</Text>
+          <Text style={[styles.detailHeaderTitle, { color: theme.text }]} numberOfLines={1}>{selectedLead.name}</Text>
           <View style={styles.scoreCircle}>
             <Text style={styles.scoreCircleText}>{selectedLead.score}</Text>
           </View>
         </View>
 
-        <ScrollView style={styles.detailScroll}>
+        <ScrollView style={[styles.detailScroll, { backgroundColor: theme.bg }]}>
           {/* Card Info Box */}
-          <View style={styles.leadDetailsBox}>
-            <View style={styles.detailsRow}>
-              <Text style={styles.detailLabel}>NEET MARKS</Text>
-              <Text style={styles.detailVal}>{selectedLead.neet_marks || 'N/A'}</Text>
+          <View style={[styles.leadDetailsBox, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+            <View style={[styles.detailsRow, { borderBottomColor: theme.border }]}>
+              <Text style={[styles.detailLabel, { color: theme.textMuted }]}>NEET MARKS</Text>
+              <Text style={[styles.detailVal, { color: theme.text }]}>{selectedLead.neet_marks || 'N/A'}</Text>
             </View>
-            <View style={styles.detailsRow}>
-              <Text style={styles.detailLabel}>BUDGET</Text>
-              <Text style={styles.detailVal}>₹{selectedLead.budget ? `${(selectedLead.budget / 100000).toFixed(0)} Lakh` : 'N/A'}</Text>
+            <View style={[styles.detailsRow, { borderBottomColor: theme.border }]}>
+              <Text style={[styles.detailLabel, { color: theme.textMuted }]}>BUDGET</Text>
+              <Text style={[styles.detailVal, { color: theme.text }]}>₹{selectedLead.budget ? `${(selectedLead.budget / 100000).toFixed(0)} Lakh` : 'N/A'}</Text>
             </View>
-            <View style={styles.detailsRow}>
-              <Text style={styles.detailLabel}>TARGET DESTINATION</Text>
-              <Text style={styles.detailVal}>{selectedLead.preferred_destination || 'N/A'}</Text>
+            <View style={[styles.detailsRow, { borderBottomColor: theme.border }]}>
+              <Text style={[styles.detailLabel, { color: theme.textMuted }]}>TARGET DESTINATION</Text>
+              <Text style={[styles.detailVal, { color: theme.text }]}>{selectedLead.preferred_destination || 'N/A'}</Text>
             </View>
-            <View style={styles.detailsRow}>
-              <Text style={styles.detailLabel}>LEAD SOURCE</Text>
-              <Text style={styles.sourceTextBadge}>{selectedLead.lead_source}</Text>
+            <View style={[styles.detailsRow, { borderBottomColor: theme.border }]}>
+              <Text style={[styles.detailLabel, { color: theme.textMuted }]}>LEAD SOURCE</Text>
+              <Text style={[styles.sourceTextBadge, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>{selectedLead.lead_source}</Text>
             </View>
-            <View style={styles.detailsRow}>
-              <Text style={styles.detailLabel}>PHONE NUMBER</Text>
-              <Text style={styles.detailVal}>{selectedLead.phone}</Text>
+            <View style={[styles.detailsRow, { borderBottomColor: theme.border }]}>
+              <Text style={[styles.detailLabel, { color: theme.textMuted }]}>PHONE NUMBER</Text>
+              <Text style={[styles.detailVal, { color: theme.text }]}>{selectedLead.phone}</Text>
             </View>
 
             {/* Clickable Status row */}
             <TouchableOpacity 
-              style={styles.detailsRowClickable}
+              style={[styles.detailsRowClickable, { borderBottomColor: theme.border }]}
               onPress={() => setActivePickerType('status')}
             >
-              <Text style={styles.detailLabel}>PIPELINE STATUS</Text>
+              <Text style={[styles.detailLabel, { color: theme.textMuted }]}>PIPELINE STATUS</Text>
               <View style={styles.pickerValueRow}>
-                <Text style={styles.detailVal}>{selectedLead.status}</Text>
-                <Text style={styles.pickerChevron}>▾</Text>
+                <Text style={[styles.detailVal, { color: theme.text }]}>{selectedLead.status}</Text>
+                <Text style={[styles.pickerChevron, { color: theme.textMuted }]}>▾</Text>
               </View>
             </TouchableOpacity>
 
             {/* Clickable Assigned Counsellor row (Admin/Manager only) */}
             {(currentUser?.role === 'admin' || currentUser?.role === 'manager') && (
               <TouchableOpacity 
-                style={styles.detailsRowClickable}
+                style={[styles.detailsRowClickable, { borderBottomColor: theme.border }]}
                 onPress={() => setActivePickerType('counsellor')}
               >
-                <Text style={styles.detailLabel}>ASSIGNED TO</Text>
+                <Text style={[styles.detailLabel, { color: theme.textMuted }]}>ASSIGNED TO</Text>
                 <View style={styles.pickerValueRow}>
-                  <Text style={styles.detailVal}>
+                  <Text style={[styles.detailVal, { color: theme.text }]}>
                     {profiles.find(p => p.id === selectedLead.assigned_counsellor_id)?.full_name || 'Unassigned'}
                   </Text>
-                  <Text style={styles.pickerChevron}>▾</Text>
+                  <Text style={[styles.pickerChevron, { color: theme.textMuted }]}>▾</Text>
                 </View>
               </TouchableOpacity>
             )}
@@ -1442,7 +2216,7 @@ export default function App() {
 
             <TouchableOpacity 
               style={[styles.actionButton, { backgroundColor: '#10B981' }]}
-              onPress={() => triggerWhatsApp(selectedLead.phone, selectedLead.name)}
+              onPress={() => triggerWhatsApp(selectedLead)}
             >
               <MessageSquare size={18} color="#FFF" />
               <Text style={styles.actionButtonText}>WhatsApp</Text>
@@ -1450,14 +2224,14 @@ export default function App() {
           </View>
 
           {/* TABS Toggles */}
-          <View style={styles.tabsRow}>
+          <View style={[styles.tabsRow, { borderBottomColor: theme.border }]}>
             {(['notes', 'tasks', 'chat'] as const).map(tab => (
               <TouchableOpacity
                 key={tab}
                 style={[styles.tabBtn, detailTab === tab && styles.tabBtnActive]}
                 onPress={() => setDetailTab(tab)}
               >
-                <Text style={[styles.tabBtnText, detailTab === tab && styles.tabBtnTextActive]}>
+                <Text style={[styles.tabBtnText, { color: theme.textMuted }, detailTab === tab && [styles.tabBtnTextActive, { color: darkMode ? '#818CF8' : '#4F46E5' }]]}>
                   {tab.toUpperCase()}
                 </Text>
               </TouchableOpacity>
@@ -1470,9 +2244,10 @@ export default function App() {
               <View style={styles.inputFormBox}>
                 <TextInput
                   placeholder="Add internal counsel note..."
+                  placeholderTextColor="#94A3B8"
                   value={noteText}
                   onChangeText={setNoteText}
-                  style={styles.formInputText}
+                  style={[styles.formInputText, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder }]}
                 />
                 <TouchableOpacity style={styles.formSubmitBtn} onPress={handleAddNote}>
                   <Text style={styles.formSubmitBtnText}>POST</Text>
@@ -1481,13 +2256,13 @@ export default function App() {
 
               {leadNotes.length > 0 ? (
                 leadNotes.map(n => (
-                  <View key={n.id} style={styles.noteCard}>
-                    <Text style={styles.noteMeta}>{n.author_name} • {new Date(n.created_at).toLocaleDateString()}</Text>
-                    <Text style={styles.noteContent}>{n.content}</Text>
+                  <View key={n.id} style={[styles.noteCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+                    <Text style={[styles.noteMeta, { color: theme.textMuted }]}>{n.author_name} • {new Date(n.created_at).toLocaleDateString()}</Text>
+                    <Text style={[styles.noteContent, { color: theme.text }]}>{n.content}</Text>
                   </View>
                 ))
               ) : (
-                <Text style={styles.emptyText}>No internal notes recorded yet</Text>
+                <Text style={[styles.emptyText, { color: theme.textMuted }]}>No internal notes recorded yet</Text>
               )}
             </View>
           )}
@@ -1498,9 +2273,10 @@ export default function App() {
               <View style={styles.inputFormBox}>
                 <TextInput
                   placeholder="Add follow-up task call..."
+                  placeholderTextColor="#94A3B8"
                   value={taskText}
                   onChangeText={setTaskText}
-                  style={styles.formInputText}
+                  style={[styles.formInputText, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder }]}
                 />
                 <TouchableOpacity style={styles.formSubmitBtn} onPress={handleAddTask}>
                   <Text style={styles.formSubmitBtnText}>ADD</Text>
@@ -1511,19 +2287,19 @@ export default function App() {
                 leadTasks.map(t => (
                   <TouchableOpacity 
                     key={t.id} 
-                    style={[styles.taskCard, t.is_completed && styles.taskCardCompleted]}
+                    style={[styles.taskCard, t.is_completed && styles.taskCardCompleted, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
                     onPress={() => handleToggleTask(t.id)}
                   >
                     <View style={styles.taskLeftRow}>
-                      <View style={[styles.taskCheckbox, t.is_completed && styles.taskCheckboxChecked]} />
-                      <Text style={[styles.taskCardTitle, t.is_completed && styles.taskTitleCompleted]}>
+                      <View style={[styles.taskCheckbox, t.is_completed && styles.taskCheckboxChecked, { borderColor: theme.border }]} />
+                      <Text style={[styles.taskCardTitle, t.is_completed && styles.taskTitleCompleted, { color: theme.text }]}>
                         {t.title}
                       </Text>
                     </View>
                   </TouchableOpacity>
                 ))
               ) : (
-                <Text style={styles.emptyText}>No scheduled tasks pending</Text>
+                <Text style={[styles.emptyText, { color: theme.textMuted }]}>No scheduled tasks pending</Text>
               )}
             </View>
           )}
@@ -1531,35 +2307,36 @@ export default function App() {
           {/* TAB CONTENTS: CHATS */}
           {detailTab === 'chat' && (
             <View style={styles.tabContentBox}>
-              <View style={styles.chatHistoryWindow}>
+              <View style={[styles.chatHistoryWindow, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
                 {leadChats.length > 0 ? (
                   leadChats.map(c => (
                     <View 
                       key={c.id} 
                       style={[
                         styles.chatBubble, 
-                        c.direction === 'out' ? styles.chatBubbleOut : styles.chatBubbleIn
+                        c.direction === 'out' ? styles.chatBubbleOut : [styles.chatBubbleIn, { backgroundColor: darkMode ? '#334155' : '#F1F5F9' }]
                       ]}
                     >
                       <Text style={[
                         styles.chatBubbleText, 
-                        c.direction === 'out' ? styles.chatTextOut : styles.chatTextIn
+                        c.direction === 'out' ? styles.chatTextOut : [styles.chatTextIn, { color: theme.text }]
                       ]}>
                         {c.text}
                       </Text>
                     </View>
                   ))
                 ) : (
-                  <Text style={styles.emptyText}>No WhatsApp chat transcripts recorded</Text>
+                  <Text style={[styles.emptyText, { color: theme.textMuted }]}>No WhatsApp chat transcripts recorded</Text>
                 )}
               </View>
 
               <View style={styles.inputFormBox}>
                 <TextInput
                   placeholder="Send simulated reply message..."
+                  placeholderTextColor="#94A3B8"
                   value={chatInput}
                   onChangeText={setChatInput}
-                  style={styles.formInputText}
+                  style={[styles.formInputText, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder }]}
                 />
                 <TouchableOpacity style={styles.chatSendBtn} onPress={handleSendWhatsAppSim}>
                   <Text style={styles.formSubmitBtnText}>SEND</Text>
@@ -1570,34 +2347,43 @@ export default function App() {
         </ScrollView>
         {renderFeedbackModal()}
         {renderPickerModal()}
+        {renderWhatsAppModal()}
       </SafeAreaView>
     );
   }
 
   // --- DASHBOARD VIEW ---
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" />
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
+      <StatusBar barStyle={darkMode ? "light-content" : "dark-content"} />
       
       {/* Mobile Dashboard Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: theme.headerBg, borderBottomColor: theme.border }]}>
         <View>
-          <Text style={styles.headerTitle}>Perfect Scholar CRM</Text>
-          <Text style={styles.headerUser}>Hi, {currentUser.full_name} ({currentUser.role.toUpperCase()})</Text>
+          <Text style={[styles.headerTitle, { color: theme.text }]}>Perfect Scholar CRM</Text>
+          <Text style={[styles.headerUser, { color: theme.textMuted }]}>Hi, {currentUser.full_name} ({currentUser.role.toUpperCase()})</Text>
         </View>
-        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
-          <LogOut size={16} color="#EF4444" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <TouchableOpacity 
+            style={[styles.settingsBtn, { backgroundColor: darkMode ? '#334155' : '#F1F5F9' }]} 
+            onPress={() => setIsSettingsOpen(true)}
+          >
+            <Settings size={16} color={darkMode ? '#F1F5F9' : '#4F46E5'} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+            <LogOut size={16} color="#EF4444" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Stats Summary Panel */}
       <View style={styles.statsSummaryRow}>
-        <View style={styles.statsSummaryCard}>
-          <Text style={styles.statsSummaryLabel}>ASSIGNED LEADS</Text>
-          <Text style={styles.statsSummaryVal}>{myLeads.length}</Text>
+        <View style={[styles.statsSummaryCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+          <Text style={[styles.statsSummaryLabel, { color: theme.textMuted }]}>ASSIGNED LEADS</Text>
+          <Text style={[styles.statsSummaryVal, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>{myLeads.length}</Text>
         </View>
-        <View style={styles.statsSummaryCard}>
-          <Text style={styles.statsSummaryLabel}>PENDING TASKS</Text>
+        <View style={[styles.statsSummaryCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+          <Text style={[styles.statsSummaryLabel, { color: theme.textMuted }]}>PENDING TASKS</Text>
           <Text style={[styles.statsSummaryVal, { color: '#EF4444' }]}>
             {tasks.filter(t => !t.is_completed).length}
           </Text>
@@ -1606,12 +2392,12 @@ export default function App() {
 
       {/* Action Header */}
       <View style={styles.actionHeaderRow}>
-        <Text style={styles.listSectionTitle}>My Assigned Leads</Text>
+        <Text style={[styles.listSectionTitle, { color: theme.text }]}>My Assigned Leads</Text>
         <TouchableOpacity 
-          style={styles.addBtnHeader}
+          style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#334155' : '#EEF2FF' }]}
           onPress={() => setIsAddModalOpen(!isAddModalOpen)}
         >
-          <Text style={styles.addBtnHeaderText}>{isAddModalOpen ? "Close Form" : "+ Create Lead"}</Text>
+          <Text style={[styles.addBtnHeaderText, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>{isAddModalOpen ? "Close Form" : "+ Create Lead"}</Text>
         </TouchableOpacity>
       </View>
 
@@ -1634,12 +2420,14 @@ export default function App() {
                 onPress={() => setSelectedStageFilter(stage)}
                 style={[
                   styles.pipelineTab, 
-                  isSelected && styles.pipelineTabActive
+                  { backgroundColor: darkMode ? '#334155' : '#EEF2FF' },
+                  isSelected && { backgroundColor: '#4F46E5' }
                 ]}
               >
                 <Text style={[
                   styles.pipelineTabText, 
-                  isSelected && styles.pipelineTabTextActive
+                  { color: darkMode ? '#94A3B8' : '#4F46E5' },
+                  isSelected && { color: '#FFFFFF' }
                 ]}>
                   {stage} ({count})
                 </Text>
@@ -1651,14 +2439,14 @@ export default function App() {
 
       {/* Manual Entry Form Toggle inside list */}
       {isAddModalOpen && (
-        <ScrollView style={styles.inlineAddForm} nestedScrollEnabled={true}>
-          <Text style={styles.formHeaderTitle}>Add Candidate Lead</Text>
+        <ScrollView style={[styles.inlineAddForm, { backgroundColor: theme.cardBg, borderColor: theme.border }]} nestedScrollEnabled={true}>
+          <Text style={[styles.formHeaderTitle, { color: theme.text }]}>Add Candidate Lead</Text>
           <TextInput 
             placeholder="Student Name *" 
             placeholderTextColor="#94A3B8"
             value={newLeadName} 
             onChangeText={setNewLeadName} 
-            style={styles.formInputInline} 
+            style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder }]} 
           />
           <TextInput 
             placeholder="Phone Number *" 
@@ -1666,7 +2454,7 @@ export default function App() {
             value={newLeadPhone} 
             onChangeText={setNewLeadPhone} 
             keyboardType="phone-pad" 
-            style={styles.formInputInline} 
+            style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder }]} 
           />
           <TextInput 
             placeholder="NEET Marks (720 max)" 
@@ -1674,7 +2462,7 @@ export default function App() {
             value={newLeadNeet} 
             onChangeText={setNewLeadNeet} 
             keyboardType="number-pad" 
-            style={styles.formInputInline} 
+            style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder }]} 
           />
           <TextInput 
             placeholder="Budget (Lakhs INR)" 
@@ -1682,14 +2470,14 @@ export default function App() {
             value={newLeadBudget} 
             onChangeText={setNewLeadBudget} 
             keyboardType="number-pad" 
-            style={styles.formInputInline} 
+            style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder }]} 
           />
           <TextInput 
             placeholder="Target Destination (Country/State)" 
             placeholderTextColor="#94A3B8"
             value={newLeadDest} 
             onChangeText={setNewLeadDest} 
-            style={styles.formInputInline} 
+            style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder }]} 
           />
           
           <TouchableOpacity style={styles.submitLeadBtn} onPress={handleAddLead}>
@@ -1699,22 +2487,22 @@ export default function App() {
       )}
 
       {/* Search Input */}
-      <View style={styles.searchBarContainer}>
+      <View style={[styles.searchBarContainer, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
         <Search size={16} color="#94A3B8" style={styles.searchIcon} />
         <TextInput
           placeholder="Search leads by name, country..."
           placeholderTextColor="#94A3B8"
           value={searchTerm}
           onChangeText={setSearchTerm}
-          style={styles.searchTextInput}
+          style={[styles.searchTextInput, { color: theme.text }]}
         />
       </View>
 
       {/* Leads Scroll list */}
-      <ScrollView style={styles.listScroll} contentContainerStyle={{ paddingBottom: 20 }}>
+      <ScrollView style={[styles.listScroll, { backgroundColor: theme.bg }]} contentContainerStyle={{ paddingBottom: 20 }}>
         {filteredLeads.length > 0 ? (
           filteredLeads.map(lead => (
-            <View key={lead.id} style={styles.leadItemCard}>
+            <View key={lead.id} style={[styles.leadItemCard, { backgroundColor: theme.leadCardBg, borderColor: theme.border }]}>
               <View style={styles.leadCardHeaderRow}>
                 <TouchableOpacity 
                   style={styles.leadCardClickableArea}
@@ -1724,25 +2512,25 @@ export default function App() {
                   }}
                 >
                   <View style={styles.leadCardHeader}>
-                    <Text style={styles.leadName}>{lead.name}</Text>
-                    <View style={styles.leadScoreBadge}>
-                      <Text style={styles.leadScoreText}>{lead.score} pts</Text>
+                    <Text style={[styles.leadName, { color: theme.text }]}>{lead.name}</Text>
+                    <View style={[styles.leadScoreBadge, { backgroundColor: darkMode ? '#334155' : '#F8FAFC' }]}>
+                      <Text style={[styles.leadScoreText, { color: theme.textMuted }]}>{lead.score} pts</Text>
                     </View>
                   </View>
                   
-                  <Text style={styles.leadContactInfo}>{lead.phone} • {lead.preferred_destination || 'Abroad'}</Text>
+                  <Text style={[styles.leadContactInfo, { color: theme.textMuted }]}>{lead.phone} • {lead.preferred_destination || 'Abroad'}</Text>
                   
                   <View style={styles.leadBadgesRow}>
                     <TouchableOpacity 
-                      style={styles.statusLabelBadgeTouch}
+                      style={[styles.statusLabelBadgeTouch, { backgroundColor: darkMode ? '#334155' : '#EEF2FF' }]}
                       onPress={() => {
                         setSelectedLead(lead);
                         setActivePickerType('status');
                       }}
                     >
-                      <Text style={styles.statusLabelBadgeText}>{lead.status} ▾</Text>
+                      <Text style={[styles.statusLabelBadgeText, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>{lead.status} ▾</Text>
                     </TouchableOpacity>
-                    <Text style={styles.sourceLabelBadge}>{lead.lead_source}</Text>
+                    <Text style={[styles.sourceLabelBadge, { backgroundColor: darkMode ? '#334155' : '#F1F5F9', color: theme.textMuted }]}>{lead.lead_source}</Text>
                   </View>
                 </TouchableOpacity>
 
@@ -1757,10 +2545,12 @@ export default function App() {
             </View>
           ))
         ) : (
-          <Text style={styles.noLeadsText}>No leads assigned to this profile matching query</Text>
+          <Text style={[styles.noLeadsText, { color: theme.textMuted }]}>No leads assigned to this profile matching query</Text>
         )}
       </ScrollView>
       {renderFeedbackModal()}
+      {renderSettingsModal()}
+      {renderWhatsAppModal()}
     </SafeAreaView>
   );
 }
@@ -1782,7 +2572,8 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC'
+    backgroundColor: '#F8FAFC',
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0
   },
   header: {
     paddingHorizontal: 20,
@@ -1813,7 +2604,8 @@ const styles = StyleSheet.create({
   },
   loginWrapper: {
     flex: 1,
-    backgroundColor: '#0A0A14'
+    backgroundColor: '#0A0A14',
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0
   },
   loginScrollContainer: {
     flexGrow: 1,
@@ -2690,6 +3482,101 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     textDecorationLine: 'underline',
+  },
+  settingsBtn: {
+    padding: 8,
+    borderRadius: 10,
+  },
+  settingsModalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  settingsModalContent: {
+    width: '90%',
+    borderRadius: 24,
+    padding: 22,
+    borderWidth: 1,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  settingsTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    marginBottom: 20,
+    letterSpacing: 0.5,
+  },
+  settingsSectionTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  settingsOptionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  settingsOptionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  settingsOptionSub: {
+    fontSize: 10.5,
+    marginTop: 2,
+  },
+  closeSettingsBtn: {
+    backgroundColor: '#4F46E5',
+    borderRadius: 12,
+    paddingVertical: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 25,
+  },
+  closeSettingsBtnText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  brochureOptionBtn: {
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginBottom: 10,
+    width: '100%'
+  },
+  brochureOptionTitle: {
+    fontSize: 12.5,
+    fontWeight: '700'
+  },
+  brochureOptionSub: {
+    fontSize: 10,
+    marginTop: 2
+  },
+  shareLoadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 24,
+    zIndex: 2000
   }
 });
 
