@@ -8,10 +8,11 @@
     "scheme": "crm",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/icon.png"
+      "icon": "./assets/icon.png",
+      "bundleIdentifier": "com.perfectscholar.crm"
     },
     "android": {
-      "package": "com.nashnewton.crm",
+      "package": "com.perfectscholar.crm",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",

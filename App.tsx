@@ -6,12 +6,15 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { 
   Phone, MessageSquare, Mail, Tag, ArrowLeft, Award, User, Clock, Search, 
-  Plus, Check, LogOut, ArrowRight, Eye, Shield, Bell, PlusCircle, CheckCircle, Smartphone, Settings 
+  Plus, Check, LogOut, ArrowRight, Eye, Shield, Bell, PlusCircle, CheckCircle, Smartphone, Settings,
+  FileText, Upload, Camera, Plane, CheckSquare, Square
 } from 'lucide-react-native';
 import { createClient } from '@supabase/supabase-js';
 import * as Device from 'expo-device';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 
 const isExpoGo = Constants.appOwnership === 'expo' || Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
@@ -136,6 +139,39 @@ export interface ActivityLog {
   description: string;
   created_at: string;
   actor_name: string;
+}
+
+export interface VisaApplication {
+  id: string;
+  lead_id: string;
+  status: string;
+  target_country?: string;
+  target_college?: string;
+  visa_notes?: string;
+  travel_departure_date?: string;
+  travel_currency_exchanged: boolean;
+  travel_insurance_done: boolean;
+  travel_luggage_guidelines: boolean;
+  travel_pickup_confirmed: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VisaRequiredDoc {
+  id: string;
+  country: string;
+  document_name: string;
+  is_required: boolean;
+}
+
+export interface VisaUploadedDoc {
+  id: string;
+  visa_application_id: string;
+  document_name: string;
+  file_url: string;
+  file_name: string;
+  status: 'pending' | 'verified' | 'rejected';
+  is_issuance: boolean;
 }
 
 // --- MOCK CONSTANTS ---
@@ -289,7 +325,16 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>(MOCK_PROFILES);
-  
+
+  // Post-Close / Visa Processing State
+  const [visaApplications, setVisaApplications] = useState<VisaApplication[]>([]);
+  const [visaRequiredDocs, setVisaRequiredDocs] = useState<VisaRequiredDoc[]>([]);
+  const [visaUploadedDocs, setVisaUploadedDocs] = useState<VisaUploadedDoc[]>([]);
+  const [isVisaScreenOpen, setIsVisaScreenOpen] = useState(false);
+  const [selectedVisaApp, setSelectedVisaApp] = useState<VisaApplication | null>(null);
+  const [visaNotesInput, setVisaNotesInput] = useState('');
+  const [isSavingVisa, setIsSavingVisa] = useState(false);
+
   // Login input states
   const [loginMethod, setLoginMethod] = useState<'email' | 'phone'>('email');
   const [emailInput, setEmailInput] = useState('');
@@ -444,6 +489,28 @@ export default function App() {
       if (templatesError) throw templatesError;
       setWhatsappTemplates((templatesData || []) as WhatsAppTemplate[]);
       await AsyncStorage.setItem('m_whatsapp_templates', JSON.stringify(templatesData || []));
+
+      // 7. Fetch Visa Applications
+      const { data: visaAppsData } = await supabase
+        .from('visa_applications')
+        .select('*')
+        .order('created_at', { ascending: false });
+      setVisaApplications((visaAppsData || []) as VisaApplication[]);
+      await AsyncStorage.setItem('m_visa_apps', JSON.stringify(visaAppsData || []));
+
+      // 8. Fetch Visa Required Docs
+      const { data: visaReqDocsData } = await supabase
+        .from('visa_required_docs')
+        .select('*');
+      setVisaRequiredDocs((visaReqDocsData || []) as VisaRequiredDoc[]);
+      await AsyncStorage.setItem('m_visa_req_docs', JSON.stringify(visaReqDocsData || []));
+
+      // 9. Fetch Visa Uploaded Docs
+      const { data: visaUpDocsData } = await supabase
+        .from('visa_uploaded_docs')
+        .select('*');
+      setVisaUploadedDocs((visaUpDocsData || []) as VisaUploadedDoc[]);
+      await AsyncStorage.setItem('m_visa_up_docs', JSON.stringify(visaUpDocsData || []));
 
     } catch (e: any) {
       console.error("Supabase data fetch error: ", e);
@@ -610,6 +677,10 @@ export default function App() {
   // Handle Android hardware back button to navigate pages or close modals instead of exiting app
   useEffect(() => {
     const backAction = () => {
+      if (isVisaScreenOpen) {
+        setIsVisaScreenOpen(false);
+        return true;
+      }
       if (isAddModalOpen) {
         setIsAddModalOpen(false);
         return true;
@@ -639,7 +710,7 @@ export default function App() {
         setCurrentScreen('dashboard');
         return true;
       }
-      return false; // Let default back button behavior (exit app) happen
+      return false;
     };
 
     const backHandler = BackHandler.addEventListener(
@@ -648,7 +719,7 @@ export default function App() {
     );
 
     return () => backHandler.remove();
-  }, [currentScreen, isSettingsOpen, activeWhatsAppLead, feedbackLead, isAddModalOpen]);
+  }, [currentScreen, isSettingsOpen, activeWhatsAppLead, feedbackLead, isAddModalOpen, isVisaScreenOpen]);
 
   // Reset/Initialize task due date/time defaults when a lead is selected
   useEffect(() => {
@@ -2555,6 +2626,11 @@ export default function App() {
     );
   }
 
+  // --- VISA PROCESSING VIEW ---
+  if (isVisaScreenOpen && selectedLead && selectedVisaApp) {
+    return renderVisaScreen();
+  }
+
   // --- DETAIL VIEW ---
   if (currentScreen === 'detail' && selectedLead) {
     const leadNotes = notes.filter(n => n.lead_id === selectedLead.id);
@@ -2628,6 +2704,45 @@ export default function App() {
               </View>
             </TouchableOpacity>
           </View>
+
+          {/* Post-Close Visa Processing Banner — only for Closed Won leads */}
+          {selectedLead.status === 'Closed Won' && (
+            <TouchableOpacity
+              style={styles.visaBanner}
+              onPress={() => {
+                const app = visaApplications.find(v => v.lead_id === selectedLead.id);
+                if (app) {
+                  setSelectedVisaApp(app);
+                  setVisaNotesInput(app.visa_notes || '');
+                } else {
+                  // Create a local placeholder until Supabase auto-creates it
+                  setSelectedVisaApp({
+                    id: '',
+                    lead_id: selectedLead.id,
+                    status: 'Document Collection',
+                    target_country: selectedLead.preferred_destination || '',
+                    target_college: '',
+                    visa_notes: '',
+                    travel_currency_exchanged: false,
+                    travel_insurance_done: false,
+                    travel_luggage_guidelines: false,
+                    travel_pickup_confirmed: false,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                  });
+                  setVisaNotesInput('');
+                }
+                setIsVisaScreenOpen(true);
+              }}
+            >
+              <Plane size={18} color="#fff" />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.visaBannerTitle}>📋 Post-Close: Visa Processing</Text>
+                <Text style={styles.visaBannerSub}>Manage documents, status & travel checklist</Text>
+              </View>
+              <ArrowRight size={16} color="#fff" />
+            </TouchableOpacity>
+          )}
 
           {/* Quick Contact Buttons */}
           <View style={styles.actionsBarRow}>
@@ -3195,6 +3310,291 @@ export default function App() {
       {renderPickerModal()}
     </SafeAreaView>
   );
+
+  // ── VISA PROCESSING SCREEN ─────────────────────────────────────────────────
+  function renderVisaScreen() {
+    if (!isVisaScreenOpen || !selectedLead || !selectedVisaApp) return null;
+
+    const VISA_STAGES = [
+      'Not Started', 'Document Collection', 'Apostille/Verification',
+      'Embassy Submission', 'Visa Issued', 'Flyer/Pre-departure'
+    ];
+
+    const country = selectedVisaApp.target_country || selectedLead.preferred_destination || '';
+    const requiredDocs = visaRequiredDocs.filter(d => d.country === country);
+    const uploadedDocs = visaUploadedDocs.filter(d => d.visa_application_id === selectedVisaApp.id);
+
+    const updateVisaField = async (field: Partial<VisaApplication>) => {
+      setIsSavingVisa(true);
+      try {
+        const appId = selectedVisaApp.id;
+        if (!appId) {
+          const { data, error } = await supabase
+            .from('visa_applications')
+            .insert({
+              lead_id: selectedLead.id,
+              status: field.status || 'Document Collection',
+              target_country: field.target_country || selectedLead.preferred_destination || '',
+              target_college: field.target_college || '',
+              visa_notes: field.visa_notes || '',
+              travel_currency_exchanged: field.travel_currency_exchanged || false,
+              travel_insurance_done: field.travel_insurance_done || false,
+              travel_luggage_guidelines: field.travel_luggage_guidelines || false,
+              travel_pickup_confirmed: field.travel_pickup_confirmed || false,
+              ...field,
+              updated_at: new Date().toISOString()
+            })
+            .select()
+            .single();
+          if (!error && data) {
+            const newApp = data as VisaApplication;
+            setSelectedVisaApp(newApp);
+            setVisaApplications(prev => [...prev.filter(v => v.lead_id !== selectedLead.id), newApp]);
+            Alert.alert('Success', 'Visa processing case initialized.');
+          } else {
+            Alert.alert('Error', 'Failed to create visa processing case.');
+          }
+        } else {
+          const { error } = await supabase
+            .from('visa_applications')
+            .update({ ...field, updated_at: new Date().toISOString() })
+            .eq('id', appId);
+          if (!error) {
+            setSelectedVisaApp(prev => prev ? { ...prev, ...field } : null);
+            setVisaApplications(prev => prev.map(v => v.id === appId ? { ...v, ...field } as VisaApplication : v));
+          }
+        }
+      } catch (e) {
+        Alert.alert('Error', 'Could not save change.');
+      } finally {
+        setIsSavingVisa(false);
+      }
+    };
+
+    const handleUploadDoc = async (docName: string, useCamera: boolean) => {
+      try {
+        let uri = '';
+        let fileName = '';
+        if (useCamera) {
+          const { status } = await ImagePicker.requestCameraPermissionsAsync();
+          if (status !== 'granted') { Alert.alert('Permission Denied', 'Camera access required.'); return; }
+          const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, quality: 0.8 });
+          if (result.canceled || !result.assets?.length) return;
+          uri = result.assets[0].uri;
+          fileName = `${docName.replace(/ /g,'_')}_scan.jpg`;
+        } else {
+          const result = await DocumentPicker.getDocumentAsync({ type: ['image/*', 'application/pdf'] });
+          if (result.canceled || !result.assets?.length) return;
+          uri = result.assets[0].uri;
+          fileName = result.assets[0].name;
+        }
+
+        let currentApp = selectedVisaApp;
+        if (!currentApp.id) {
+          const { data, error } = await supabase
+            .from('visa_applications')
+            .insert({
+              lead_id: selectedLead.id,
+              status: 'Document Collection',
+              target_country: country,
+              target_college: '',
+              visa_notes: '',
+              travel_currency_exchanged: false,
+              travel_insurance_done: false,
+              travel_luggage_guidelines: false,
+              travel_pickup_confirmed: false,
+              updated_at: new Date().toISOString()
+            })
+            .select()
+            .single();
+          if (!error && data) {
+            currentApp = data as VisaApplication;
+            setSelectedVisaApp(currentApp);
+            setVisaApplications(prev => [...prev.filter(v => v.lead_id !== selectedLead.id), currentApp]);
+          } else {
+            Alert.alert('Error', 'Failed to initialize visa case for document upload.');
+            return;
+          }
+        }
+
+        const { data, error } = await supabase
+          .from('visa_uploaded_docs')
+          .upsert({
+            visa_application_id: currentApp.id,
+            document_name: docName,
+            file_url: uri,
+            file_name: fileName,
+            status: 'pending',
+          }, { onConflict: 'visa_application_id,document_name' })
+          .select()
+          .single();
+        if (!error && data) {
+          setVisaUploadedDocs(prev => {
+            const filtered = prev.filter(d => !(d.visa_application_id === currentApp.id && d.document_name === docName));
+            return [...filtered, data as VisaUploadedDoc];
+          });
+          Alert.alert('Uploaded', `${docName} uploaded successfully!`);
+        } else {
+          Alert.alert('Error', 'Failed to record document upload.');
+        }
+      } catch (e) {
+        Alert.alert('Error', 'Upload failed.');
+      }
+    };
+
+    const getDocStatus = (docName: string) => {
+      return uploadedDocs.find(d => d.document_name === docName);
+    };
+
+    const badgeColor = (status: string) => {
+      if (status === 'verified') return { bg: '#D1FAE5', text: '#065F46' };
+      if (status === 'rejected') return { bg: '#FEE2E2', text: '#991B1B' };
+      return { bg: '#FEF3C7', text: '#92400E' }; // pending
+    };
+
+    return (
+      <SafeAreaView style={styles.visaContainer}>
+        <StatusBar barStyle="light-content" />
+
+        {/* Header */}
+        <View style={styles.visaHeader}>
+          <TouchableOpacity onPress={() => setIsVisaScreenOpen(false)} style={styles.visaBackBtn}>
+            <ArrowLeft size={20} color="#fff" />
+          </TouchableOpacity>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.visaHeaderTitle}>Visa Processing</Text>
+            <Text style={styles.visaHeaderSub}>{selectedLead.name} · {country}</Text>
+          </View>
+          {isSavingVisa && <ActivityIndicator color="#fff" size="small" />}
+        </View>
+
+        <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+
+          {/* Status Pipeline */}
+          <View style={styles.visaSection}>
+            <Text style={styles.visaSectionTitle}>📍 Visa Status Pipeline</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 12 }}>
+              {VISA_STAGES.map((stage, idx) => {
+                const isActive = selectedVisaApp.status === stage;
+                const isPast = VISA_STAGES.indexOf(selectedVisaApp.status) > idx;
+                return (
+                  <TouchableOpacity
+                    key={stage}
+                    style={[
+                      styles.visaStageChip,
+                      isActive && styles.visaStageChipActive,
+                      isPast && styles.visaStageChipPast,
+                    ]}
+                    onPress={() => updateVisaField({ status: stage })}
+                  >
+                    {isPast && <Check size={10} color="#fff" />}
+                    <Text style={[
+                      styles.visaStageChipText,
+                      (isActive || isPast) && { color: '#fff' }
+                    ]}>{stage}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+
+          {/* Document Checklist */}
+          <View style={styles.visaSection}>
+            <Text style={styles.visaSectionTitle}>📄 Document Checklist — {country || 'Set country'}</Text>
+            {requiredDocs.length === 0 && (
+              <Text style={styles.visaEmptyText}>No documents configured for this country. Check Supabase visa_required_docs.</Text>
+            )}
+            {requiredDocs.map(doc => {
+              const uploaded = getDocStatus(doc.document_name);
+              const colors = badgeColor(uploaded?.status || 'pending');
+              return (
+                <View key={doc.id} style={styles.visaDocRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.visaDocName}>{doc.document_name}</Text>
+                    {uploaded ? (
+                      <View style={[styles.visaDocBadge, { backgroundColor: colors.bg }]}>
+                        <Text style={[styles.visaDocBadgeText, { color: colors.text }]}>
+                          {uploaded.status.toUpperCase()} · {uploaded.file_name}
+                        </Text>
+                      </View>
+                    ) : (
+                      <View style={[styles.visaDocBadge, { backgroundColor: '#F1F5F9' }]}>
+                        <Text style={[styles.visaDocBadgeText, { color: '#64748B' }]}>NOT UPLOADED</Text>
+                      </View>
+                    )}
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <TouchableOpacity
+                      style={styles.visaIconBtn}
+                      onPress={() => handleUploadDoc(doc.document_name, true)}
+                    >
+                      <Camera size={16} color="#4F46E5" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.visaIconBtn}
+                      onPress={() => handleUploadDoc(doc.document_name, false)}
+                    >
+                      <Upload size={16} color="#4F46E5" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+
+          {/* Visa Notes */}
+          <View style={styles.visaSection}>
+            <Text style={styles.visaSectionTitle}>📝 Case Notes</Text>
+            <TextInput
+              style={styles.visaNotesInput}
+              placeholder="Add visa case notes, embassy instructions, etc."
+              placeholderTextColor="#94A3B8"
+              value={visaNotesInput}
+              onChangeText={setVisaNotesInput}
+              multiline
+              numberOfLines={4}
+              textAlignVertical="top"
+            />
+            <TouchableOpacity
+              style={styles.visaSaveNotesBtn}
+              onPress={() => updateVisaField({ visa_notes: visaNotesInput })}
+            >
+              <Text style={styles.visaSaveNotesBtnText}>Save Notes</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Travel Readiness Checklist */}
+          <View style={styles.visaSection}>
+            <Text style={styles.visaSectionTitle}>✈️ Travel Readiness</Text>
+            {[
+              { label: 'Currency Exchanged', key: 'travel_currency_exchanged' as keyof VisaApplication, emoji: '💵' },
+              { label: 'Travel Insurance Done', key: 'travel_insurance_done' as keyof VisaApplication, emoji: '🛡️' },
+              { label: 'Luggage Guidelines Reviewed', key: 'travel_luggage_guidelines' as keyof VisaApplication, emoji: '🧳' },
+              { label: 'Airport Pickup Confirmed', key: 'travel_pickup_confirmed' as keyof VisaApplication, emoji: '🚗' },
+            ].map(item => {
+              const isChecked = selectedVisaApp[item.key] as boolean;
+              return (
+                <TouchableOpacity
+                  key={item.key}
+                  style={styles.travelCheckRow}
+                  onPress={() => updateVisaField({ [item.key]: !isChecked })}
+                >
+                  <Text style={styles.travelCheckEmoji}>{item.emoji}</Text>
+                  <Text style={styles.travelCheckLabel}>{item.label}</Text>
+                  {isChecked
+                    ? <CheckSquare size={22} color="#10B981" />
+                    : <Square size={22} color="#94A3B8" />
+                  }
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
 }
 
 // --- NATIVE STYLESHEET ---
@@ -4248,6 +4648,179 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderRadius: 24,
     zIndex: 2000
-  }
+  },
+  visaBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#4F46E5',
+    borderRadius: 16,
+    padding: 14,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    shadowColor: '#4F46E5',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  visaBannerTitle: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#fff',
+  },
+  visaBannerSub: {
+    fontSize: 10,
+    color: '#C7D2FE',
+    marginTop: 1,
+  },
+  visaContainer: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+  },
+  visaHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155',
+  },
+  visaBackBtn: {
+    padding: 6,
+    borderRadius: 10,
+    backgroundColor: '#334155',
+  },
+  visaHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#F8FAFC',
+  },
+  visaHeaderSub: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 1,
+  },
+  visaSection: {
+    backgroundColor: '#1E293B',
+    borderRadius: 20,
+    margin: 16,
+    marginBottom: 0,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  visaSectionTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#94A3B8',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  visaStageChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#334155',
+    backgroundColor: '#0F172A',
+    marginRight: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  visaStageChipActive: {
+    backgroundColor: '#4F46E5',
+    borderColor: '#4F46E5',
+  },
+  visaStageChipPast: {
+    backgroundColor: '#10B981',
+    borderColor: '#10B981',
+  },
+  visaStageChipText: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#94A3B8',
+  },
+  visaDocRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155',
+    gap: 10,
+  },
+  visaDocName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#F1F5F9',
+    marginBottom: 4,
+  },
+  visaDocBadge: {
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    alignSelf: 'flex-start',
+  },
+  visaDocBadgeText: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  visaIconBtn: {
+    padding: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+    backgroundColor: '#0F172A',
+  },
+  visaEmptyText: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 10,
+    fontStyle: 'italic',
+  },
+  visaNotesInput: {
+    backgroundColor: '#0F172A',
+    borderRadius: 12,
+    padding: 12,
+    color: '#F1F5F9',
+    fontSize: 13,
+    marginTop: 12,
+    minHeight: 100,
+    borderWidth: 1,
+    borderColor: '#334155',
+    textAlignVertical: 'top',
+  },
+  visaSaveNotesBtn: {
+    backgroundColor: '#4F46E5',
+    borderRadius: 10,
+    padding: 10,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  visaSaveNotesBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  travelCheckRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155',
+    gap: 12,
+  },
+  travelCheckEmoji: {
+    fontSize: 20,
+  },
+  travelCheckLabel: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#F1F5F9',
+  },
 });
-
