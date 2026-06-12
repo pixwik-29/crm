@@ -1,13 +1,14 @@
 {
   "expo": {
     "name": "PS-CRM",
-    "slug": "crm-mobile",
+    "slug": "crm",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/ps_crm_app_icon.jpg",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "icon": "./assets/ps_crm_app_icon.jpg",
+      "bundleIdentifier": "com.perfectscholar.crm"
     },
     "android": {
       "package": "com.perfectscholar.crm",
@@ -22,7 +23,7 @@
     },
     "extra": {
       "eas": {
-        "projectId": "e2d8f7c1-7682-4a35-87fc-86ce07cee64a"
+        "projectId": "13d4d5f3-78e7-444f-9e40-fcfdc281b17e"
       }
     },
     "owner": "nashnewton"
