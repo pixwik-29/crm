@@ -9,10 +9,13 @@ import {
   Plus, Check, LogOut, ArrowRight, Eye, Shield, Bell, PlusCircle, CheckCircle, Smartphone, Settings 
 } from 'lucide-react-native';
 import { createClient } from '@supabase/supabase-js';
-import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
+
+const isExpoGo = Constants.appOwnership === 'expo' || Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+const Notifications = isExpoGo ? null : require('expo-notifications');
 
 const supabaseUrl = 'https://gkayyfwadwwsucpqeefw.supabase.co';
 const supabaseAnonKey = 'sb_publishable_VLg-MNbQe3Q7VrBG_ldcrA_cyTJ7lEv';
@@ -27,18 +30,25 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 });
 
 // Configure foreground notification handling
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+if (Notifications) {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+}
 
 async function registerForPushNotificationsAsync() {
   if (Platform.OS === 'web') return null;
+
+  if (isExpoGo || !Notifications) {
+    console.log('Skipping Push Token generation inside Expo Go to prevent runtime crash.');
+    return null;
+  }
   
   if (!Device.isDevice) {
     console.log('Must use physical device for Push Notifications');
@@ -55,6 +65,15 @@ async function registerForPushNotificationsAsync() {
     if (finalStatus !== 'granted') {
       console.log('Failed to get push token for push notification!');
       return null;
+    }
+    
+    if (Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync('default', {
+        name: 'default',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#FF231F7C',
+      });
     }
     
     const tokenData = await Notifications.getExpoPushTokenAsync({
@@ -286,7 +305,8 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   
   // Navigation Screens
-  const [currentScreen, setCurrentScreen] = useState<'dashboard' | 'detail'>('dashboard');
+  const [currentScreen, setCurrentScreen] = useState<'dashboard' | 'detail' | 'tasksList'>('dashboard');
+  const [prevScreen, setPrevScreen] = useState<'dashboard' | 'tasksList'>('dashboard');
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   
   // Modals / Input Toggles
@@ -302,6 +322,13 @@ export default function App() {
   const [reminderHour, setReminderHour] = useState('10');
   const [reminderMinute, setReminderMinute] = useState('00');
   const [reminderAmPm, setReminderAmPm] = useState('AM');
+  
+  // Task Due Date/Time States
+  const [taskDate, setTaskDate] = useState('');
+  const [taskMonth, setTaskMonth] = useState('');
+  const [taskHour, setTaskHour] = useState('10');
+  const [taskMinute, setTaskMinute] = useState('00');
+  const [taskAmPm, setTaskAmPm] = useState('AM');
   
   // Call/Counsellor Select Picker overlay state
   const [activePickerType, setActivePickerType] = useState<'status' | 'counsellor' | null>(null);
@@ -504,6 +531,82 @@ export default function App() {
     loadSettings();
   }, []);
 
+  const fetchLeadsOnly = async () => {
+    try {
+      const { data: leadsData, error: leadsError } = await supabase
+        .from('leads')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!leadsError && leadsData) {
+        setLeads(leadsData);
+        await AsyncStorage.setItem('m_leads', JSON.stringify(leadsData));
+      }
+    } catch (e) {
+      console.error("Error auto-refreshing leads:", e);
+    }
+  };
+
+  const fetchTasksOnly = async () => {
+    try {
+      const { data: tasksData, error: tasksError } = await supabase
+        .from('tasks')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!tasksError && tasksData) {
+        setTasks(tasksData);
+        await AsyncStorage.setItem('m_tasks', JSON.stringify(tasksData));
+      }
+    } catch (e) {
+      console.error("Error auto-refreshing tasks:", e);
+    }
+  };
+
+  const fetchNotesOnly = async () => {
+    try {
+      const { data: notesData, error: notesError } = await supabase
+        .from('notes')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!notesError && notesData) {
+        setNotes(notesData);
+        await AsyncStorage.setItem('m_notes', JSON.stringify(notesData));
+      }
+    } catch (e) {
+      console.error("Error auto-refreshing notes:", e);
+    }
+  };
+
+  // Real-Time Subscriptions and Background Polling (Auto-Lead Refresh)
+  useEffect(() => {
+    if (!currentUser) return;
+
+    // 1. Subscribe to Postgres Changes via Supabase channels
+    const leadsChannel = supabase
+      .channel('leads-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, () => {
+        fetchLeadsOnly();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, () => {
+        fetchTasksOnly();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, () => {
+        fetchNotesOnly();
+      })
+      .subscribe();
+
+    // 2. 30-Second Polling Fallback (ensures freshness even on network fluctuations)
+    const pollInterval = setInterval(() => {
+      fetchLeadsOnly();
+      fetchTasksOnly();
+      fetchNotesOnly();
+    }, 30000);
+
+    return () => {
+      supabase.removeChannel(leadsChannel);
+      clearInterval(pollInterval);
+    };
+  }, [currentUser]);
+
   // Handle Android hardware back button to navigate pages or close modals instead of exiting app
   useEffect(() => {
     const backAction = () => {
@@ -529,6 +632,10 @@ export default function App() {
         return true;
       }
       if (currentScreen === 'detail') {
+        setCurrentScreen(prevScreen);
+        return true;
+      }
+      if (currentScreen === 'tasksList') {
         setCurrentScreen('dashboard');
         return true;
       }
@@ -542,6 +649,19 @@ export default function App() {
 
     return () => backHandler.remove();
   }, [currentScreen, isSettingsOpen, activeWhatsAppLead, feedbackLead, isAddModalOpen]);
+
+  // Reset/Initialize task due date/time defaults when a lead is selected
+  useEffect(() => {
+    if (selectedLead) {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      setTaskDate(tomorrow.getDate().toString());
+      setTaskMonth((tomorrow.getMonth() + 1).toString());
+      setTaskHour('10');
+      setTaskMinute('00');
+      setTaskAmPm('AM');
+    }
+  }, [selectedLead]);
 
   // Fetch live CRM data and register push notifications when session is established
   useEffect(() => {
@@ -1119,13 +1239,33 @@ export default function App() {
     if (!taskText.trim() || !selectedLead) return;
 
     try {
+      const day = parseInt(taskDate);
+      const month = parseInt(taskMonth);
+      if (isNaN(day) || isNaN(month) || day < 1 || day > 31 || month < 1 || month > 12) {
+        Alert.alert("Invalid Date", "Please enter a valid day (1-31) and month (1-12) for the task.");
+        return;
+      }
+      
+      const year = new Date().getFullYear();
+      let hr = parseInt(taskHour) || 12;
+      const min = parseInt(taskMinute) || 0;
+      if (taskAmPm === 'PM' && hr < 12) hr += 12;
+      if (taskAmPm === 'AM' && hr === 12) hr = 0;
+      
+      const dateObj = new Date(year, month - 1, day, hr, min);
+      if (isNaN(dateObj.getTime())) {
+        Alert.alert("Invalid Date", "Could not calculate a valid date/time.");
+        return;
+      }
+      const dueDate = dateObj.toISOString();
+
       const { error } = await supabase
         .from('tasks')
         .insert([{
           lead_id: selectedLead.id,
           assignee_id: currentUser?.id,
           title: taskText,
-          due_date: new Date(Date.now() + 86400000).toISOString(),
+          due_date: dueDate,
           is_completed: false
         }]);
 
@@ -1285,9 +1425,19 @@ export default function App() {
         }
         
         const year = new Date().getFullYear();
+        let hr = parseInt(reminderHour) || 12;
+        const min = parseInt(reminderMinute) || 0;
+        if (reminderAmPm === 'PM' && hr < 12) hr += 12;
+        if (reminderAmPm === 'AM' && hr === 12) hr = 0;
+        
+        const dateObj = new Date(year, month - 1, day, hr, min);
+        if (isNaN(dateObj.getTime())) {
+          Alert.alert("Invalid Date", "Could not calculate a valid date/time.");
+          return;
+        }
+        const dueDate = dateObj.toISOString();
         const formattedDate = `${month}/${day}/${year}`;
         const formattedTime = `${reminderHour}:${reminderMinute} ${reminderAmPm}`;
-        const dueDate = new Date(`${formattedDate} ${formattedTime}`).toISOString();
         
         const { error: taskError } = await supabase
           .from('tasks')
@@ -1451,56 +1601,120 @@ export default function App() {
               </View>
 
               <Text style={styles.feedbackSubLabel}>Custom Schedule</Text>
-              <View style={styles.pickerContainer}>
-                <View style={styles.pickerRow}>
-                  <TextInput 
-                    style={styles.pickerInput} 
-                    value={reminderDate} 
-                    onChangeText={setReminderDate} 
-                    keyboardType="number-pad" 
-                    maxLength={2} 
-                    placeholder="DD"
-                    placeholderTextColor="#94A3B8"
-                  />
-                  <Text style={styles.pickerSeparator}>/</Text>
-                  <TextInput 
-                    style={styles.pickerInput} 
-                    value={reminderMonth} 
-                    onChangeText={setReminderMonth} 
-                    keyboardType="number-pad" 
-                    maxLength={2} 
-                    placeholder="MM"
-                    placeholderTextColor="#94A3B8"
-                  />
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+                
+                {/* Date Selector Widget */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={{ fontSize: 11, color: theme.textMuted }}>Date:</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.inputBg, borderWidth: 1, borderColor: theme.inputBorder, borderRadius: 8, padding: 2 }}>
+                    <TouchableOpacity 
+                      style={styles.adjustBtn} 
+                      onPress={() => {
+                        let d = parseInt(reminderDate) || 1;
+                        d = d === 1 ? 31 : d - 1;
+                        setReminderDate(d.toString());
+                      }}
+                    >
+                      <Text style={[styles.adjustBtnText, { color: theme.text }]}>-</Text>
+                    </TouchableOpacity>
+                    <Text style={{ width: 22, textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: theme.text }}>{reminderDate.padStart(2, '0')}</Text>
+                    <TouchableOpacity 
+                      style={styles.adjustBtn} 
+                      onPress={() => {
+                        let d = parseInt(reminderDate) || 1;
+                        d = d === 31 ? 1 : d + 1;
+                        setReminderDate(d.toString());
+                      }}
+                    >
+                      <Text style={[styles.adjustBtnText, { color: theme.text }]}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+                  
+                  <Text style={{ color: theme.textMuted, fontSize: 12 }}>/</Text>
+                  
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.inputBg, borderWidth: 1, borderColor: theme.inputBorder, borderRadius: 8, padding: 2 }}>
+                    <TouchableOpacity 
+                      style={styles.adjustBtn} 
+                      onPress={() => {
+                        let m = parseInt(reminderMonth) || 1;
+                        m = m === 1 ? 12 : m - 1;
+                        setReminderMonth(m.toString());
+                      }}
+                    >
+                      <Text style={[styles.adjustBtnText, { color: theme.text }]}>-</Text>
+                    </TouchableOpacity>
+                    <Text style={{ width: 22, textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: theme.text }}>{reminderMonth.padStart(2, '0')}</Text>
+                    <TouchableOpacity 
+                      style={styles.adjustBtn} 
+                      onPress={() => {
+                        let m = parseInt(reminderMonth) || 1;
+                        m = m === 12 ? 1 : m + 1;
+                        setReminderMonth(m.toString());
+                      }}
+                    >
+                      <Text style={[styles.adjustBtnText, { color: theme.text }]}>+</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
 
-                <View style={styles.pickerRow}>
+                {/* Time Selector Widget */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={{ fontSize: 11, color: theme.textMuted }}>Time:</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.inputBg, borderWidth: 1, borderColor: theme.inputBorder, borderRadius: 8, padding: 2 }}>
+                    <TouchableOpacity 
+                      style={styles.adjustBtn} 
+                      onPress={() => {
+                        let h = parseInt(reminderHour) || 12;
+                        h = h === 1 ? 12 : h - 1;
+                        setReminderHour(h.toString().padStart(2, '0'));
+                      }}
+                    >
+                      <Text style={[styles.adjustBtnText, { color: theme.text }]}>-</Text>
+                    </TouchableOpacity>
+                    <Text style={{ width: 22, textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: theme.text }}>{reminderHour}</Text>
+                    <TouchableOpacity 
+                      style={styles.adjustBtn} 
+                      onPress={() => {
+                        let h = parseInt(reminderHour) || 12;
+                        h = h === 12 ? 1 : h + 1;
+                        setReminderHour(h.toString().padStart(2, '0'));
+                      }}
+                    >
+                      <Text style={[styles.adjustBtnText, { color: theme.text }]}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+                  
+                  <Text style={{ color: theme.textMuted, fontSize: 12 }}>:</Text>
+                  
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.inputBg, borderWidth: 1, borderColor: theme.inputBorder, borderRadius: 8, padding: 2 }}>
+                    <TouchableOpacity 
+                      style={styles.adjustBtn} 
+                      onPress={() => {
+                        let min = parseInt(reminderMinute) || 0;
+                        min = min === 0 ? 45 : min - 15;
+                        setReminderMinute(min.toString().padStart(2, '0'));
+                      }}
+                    >
+                      <Text style={[styles.adjustBtnText, { color: theme.text }]}>-</Text>
+                    </TouchableOpacity>
+                    <Text style={{ width: 22, textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: theme.text }}>{reminderMinute}</Text>
+                    <TouchableOpacity 
+                      style={styles.adjustBtn} 
+                      onPress={() => {
+                        let min = parseInt(reminderMinute) || 0;
+                        min = min === 45 ? 0 : min + 15;
+                        setReminderMinute(min.toString().padStart(2, '0'));
+                      }}
+                    >
+                      <Text style={[styles.adjustBtnText, { color: theme.text }]}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+                  
                   <TouchableOpacity 
-                    style={styles.selectorBtn} 
-                    onPress={() => {
-                      let hr = parseInt(reminderHour) || 12;
-                      hr = hr === 12 ? 1 : hr + 1;
-                      setReminderHour(hr.toString().padStart(2, '0'));
-                    }}
-                  >
-                    <Text style={styles.selectorBtnText}>{reminderHour}</Text>
-                  </TouchableOpacity>
-                  <Text style={styles.pickerColon}>:</Text>
-                  <TouchableOpacity 
-                    style={styles.selectorBtn} 
-                    onPress={() => {
-                      let min = parseInt(reminderMinute) || 0;
-                      min = min === 45 ? 0 : min + 15;
-                      setReminderMinute(min.toString().padStart(2, '0'));
-                    }}
-                  >
-                    <Text style={styles.selectorBtnText}>{reminderMinute}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity 
-                    style={styles.ampmBtn} 
+                    style={[styles.ampmBtn, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, marginLeft: 2 }]} 
                     onPress={() => setReminderAmPm(prev => prev === 'AM' ? 'PM' : 'AM')}
                   >
-                    <Text style={styles.ampmBtnText}>{reminderAmPm}</Text>
+                    <Text style={[styles.ampmBtnText, { color: darkMode ? '#818CF8' : '#4F46E5', fontSize: 11, fontWeight: 'bold' }]}>{reminderAmPm}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -2212,6 +2426,123 @@ export default function App() {
     );
   }
 
+  // --- TASKS LIST VIEW ---
+  if (currentScreen === 'tasksList') {
+    const myLeadIds = myLeads.map(l => l.id);
+    const pendingTasks = tasks
+      .filter(t => !t.is_completed && myLeadIds.includes(t.lead_id))
+      .sort((a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime());
+
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
+        <StatusBar barStyle={darkMode ? "light-content" : "dark-content"} />
+        
+        {/* Header */}
+        <View style={[styles.header, { backgroundColor: theme.headerBg, borderBottomColor: theme.border }]}>
+          <TouchableOpacity 
+            style={[styles.backBtn, { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: darkMode ? '#334155' : '#F1F5F9', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }]} 
+            onPress={() => setCurrentScreen('dashboard')}
+          >
+            <ArrowLeft size={16} color={theme.text} />
+            <Text style={{ fontSize: 13, fontWeight: '600', color: theme.text }}>Back</Text>
+          </TouchableOpacity>
+          <Text style={[styles.headerTitle, { color: theme.text, flex: 1, textAlign: 'center', marginRight: 50 }]}>Pending Tasks</Text>
+        </View>
+
+        {/* Task List */}
+        <ScrollView style={{ flex: 1, paddingHorizontal: 20, paddingTop: 15 }} contentContainerStyle={{ paddingBottom: 30 }}>
+          {pendingTasks.length > 0 ? (
+            pendingTasks.map(task => {
+              const lead = leads.find(l => l.id === task.lead_id);
+              const formattedDate = new Date(task.due_date).toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric'
+              });
+              const formattedTime = new Date(task.due_date).toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit'
+              });
+
+              return (
+                <View 
+                  key={task.id} 
+                  style={[
+                    styles.leadItemCard, 
+                    { 
+                      backgroundColor: theme.leadCardBg, 
+                      borderColor: theme.border,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: 14
+                    }
+                  ]}
+                >
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: theme.text }}>
+                      {task.title}
+                    </Text>
+                    
+                    {lead && (
+                      <TouchableOpacity 
+                        style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 4 }}
+                        onPress={() => {
+                          setPrevScreen('tasksList');
+                          setSelectedLead(lead);
+                          setCurrentScreen('detail');
+                        }}
+                      >
+                        <User size={12} color={darkMode ? '#818CF8' : '#4F46E5'} />
+                        <Text style={{ fontSize: 12, fontWeight: '600', color: darkMode ? '#818CF8' : '#4F46E5', textDecorationLine: 'underline' }}>
+                          Lead: {lead.name}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 4 }}>
+                      <Clock size={12} color={theme.textMuted} />
+                      <Text style={{ fontSize: 11, color: theme.textMuted }}>
+                        Due: {formattedDate} at {formattedTime}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Complete Task checkbox button */}
+                  <TouchableOpacity 
+                    style={{ 
+                      width: 28, 
+                      height: 28, 
+                      borderRadius: 14, 
+                      borderWidth: 2, 
+                      borderColor: '#10B981', 
+                      justifyContent: 'center', 
+                      alignItems: 'center',
+                      backgroundColor: 'transparent'
+                    }}
+                    onPress={() => handleToggleTask(task.id)}
+                  >
+                    <Check size={14} color="#10B981" />
+                  </TouchableOpacity>
+                </View>
+              );
+            })
+          ) : (
+            <View style={{ alignItems: 'center', marginTop: 60 }}>
+              <CheckCircle size={48} color="#10B981" style={{ marginBottom: 12 }} />
+              <Text style={{ fontSize: 15, fontWeight: '700', color: theme.text, marginBottom: 4 }}>
+                All caught up!
+              </Text>
+              <Text style={{ fontSize: 13, color: theme.textMuted, textAlign: 'center' }}>
+                You have no scheduled tasks pending.
+              </Text>
+            </View>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
   // --- DETAIL VIEW ---
   if (currentScreen === 'detail' && selectedLead) {
     const leadNotes = notes.filter(n => n.lead_id === selectedLead.id);
@@ -2224,7 +2555,7 @@ export default function App() {
         {/* Detail Header */}
         <View style={[styles.detailHeader, { backgroundColor: theme.headerBg, borderBottomColor: theme.border }]}>
           <TouchableOpacity 
-            onPress={() => setCurrentScreen('dashboard')}
+            onPress={() => setCurrentScreen(prevScreen)}
             style={[styles.backBtn, { backgroundColor: darkMode ? '#334155' : '#F1F5F9', paddingHorizontal: 10, paddingVertical: 6 }]}
           >
             <ArrowLeft size={18} color={theme.text} />
@@ -2271,21 +2602,19 @@ export default function App() {
               </View>
             </TouchableOpacity>
 
-            {/* Clickable Assigned Counsellor row (Admin/Manager only) */}
-            {(currentUser?.role === 'admin' || currentUser?.role === 'manager') && (
-              <TouchableOpacity 
-                style={[styles.detailsRowClickable, { borderBottomColor: theme.border }]}
-                onPress={() => setActivePickerType('counsellor')}
-              >
-                <Text style={[styles.detailLabel, { color: theme.textMuted }]}>ASSIGNED TO</Text>
-                <View style={styles.pickerValueRow}>
-                  <Text style={[styles.detailVal, { color: theme.text }]}>
-                    {profiles.find(p => p.id === selectedLead.assigned_counsellor_id)?.full_name || 'Unassigned'}
-                  </Text>
-                  <Text style={[styles.pickerChevron, { color: theme.textMuted }]}>▾</Text>
-                </View>
-              </TouchableOpacity>
-            )}
+            {/* Clickable Assigned Counsellor row */}
+            <TouchableOpacity 
+              style={[styles.detailsRowClickable, { borderBottomColor: theme.border }]}
+              onPress={() => setActivePickerType('counsellor')}
+            >
+              <Text style={[styles.detailLabel, { color: theme.textMuted }]}>ASSIGNED TO</Text>
+              <View style={styles.pickerValueRow}>
+                <Text style={[styles.detailVal, { color: theme.text }]}>
+                  {profiles.find(p => p.id === selectedLead.assigned_counsellor_id)?.full_name || 'Unassigned'}
+                </Text>
+                <Text style={[styles.pickerChevron, { color: theme.textMuted }]}>▾</Text>
+              </View>
+            </TouchableOpacity>
           </View>
 
           {/* Quick Contact Buttons */}
@@ -2354,17 +2683,193 @@ export default function App() {
           {/* TAB CONTENTS: TASKS */}
           {detailTab === 'tasks' && (
             <View style={styles.tabContentBox}>
-              <View style={styles.inputFormBox}>
-                <TextInput
-                  placeholder="Add follow-up task call..."
-                  placeholderTextColor="#94A3B8"
-                  value={taskText}
-                  onChangeText={setTaskText}
-                  style={[styles.formInputText, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder }]}
-                />
-                <TouchableOpacity style={styles.formSubmitBtn} onPress={handleAddTask}>
-                  <Text style={styles.formSubmitBtnText}>ADD</Text>
-                </TouchableOpacity>
+              <View style={[styles.inputFormBox, { flexDirection: 'column', gap: 10, alignItems: 'stretch' }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <TextInput
+                    placeholder="Add follow-up task call..."
+                    placeholderTextColor="#94A3B8"
+                    value={taskText}
+                    onChangeText={setTaskText}
+                    style={[styles.formInputText, { flex: 1, backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder }]}
+                  />
+                  <TouchableOpacity style={styles.formSubmitBtn} onPress={handleAddTask}>
+                    <Text style={styles.formSubmitBtnText}>ADD</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Task Schedule Inputs */}
+                <View style={{ borderTopWidth: 1, borderTopColor: theme.border, paddingTop: 8 }}>
+                  <Text style={{ fontSize: 10, fontWeight: 'bold', color: theme.textMuted, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>Task Schedule (Date & Time)</Text>
+                  
+                  {/* Quick Date Presets */}
+                  <View style={{ flexDirection: 'row', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+                    <TouchableOpacity 
+                      style={[styles.presetBtn, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', borderColor: darkMode ? '#475569' : '#E2E8F0' }]}
+                      onPress={() => {
+                        const d = new Date();
+                        setTaskDate(d.getDate().toString());
+                        setTaskMonth((d.getMonth() + 1).toString());
+                      }}
+                    >
+                      <Text style={[styles.presetBtnText, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>Today</Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity 
+                      style={[styles.presetBtn, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', borderColor: darkMode ? '#475569' : '#E2E8F0' }]}
+                      onPress={() => {
+                        const d = new Date();
+                        d.setDate(d.getDate() + 1);
+                        setTaskDate(d.getDate().toString());
+                        setTaskMonth((d.getMonth() + 1).toString());
+                      }}
+                    >
+                      <Text style={[styles.presetBtnText, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>Tomorrow</Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity 
+                      style={[styles.presetBtn, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', borderColor: darkMode ? '#475569' : '#E2E8F0' }]}
+                      onPress={() => {
+                        const d = new Date();
+                        d.setDate(d.getDate() + 3);
+                        setTaskDate(d.getDate().toString());
+                        setTaskMonth((d.getMonth() + 1).toString());
+                      }}
+                    >
+                      <Text style={[styles.presetBtnText, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>In 3 Days</Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity 
+                      style={[styles.presetBtn, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', borderColor: darkMode ? '#475569' : '#E2E8F0' }]}
+                      onPress={() => {
+                        const d = new Date();
+                        d.setDate(d.getDate() + 7);
+                        setTaskDate(d.getDate().toString());
+                        setTaskMonth((d.getMonth() + 1).toString());
+                      }}
+                    >
+                      <Text style={[styles.presetBtnText, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>1 Week</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                    
+                    {/* Date Selector Widget */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={{ fontSize: 11, color: theme.textMuted }}>Date:</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.inputBg, borderWidth: 1, borderColor: theme.inputBorder, borderRadius: 8, padding: 2 }}>
+                        <TouchableOpacity 
+                          style={styles.adjustBtn} 
+                          onPress={() => {
+                            let d = parseInt(taskDate) || 1;
+                            d = d === 1 ? 31 : d - 1;
+                            setTaskDate(d.toString());
+                          }}
+                        >
+                          <Text style={[styles.adjustBtnText, { color: theme.text }]}>-</Text>
+                        </TouchableOpacity>
+                        <Text style={{ width: 22, textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: theme.text }}>{taskDate.padStart(2, '0')}</Text>
+                        <TouchableOpacity 
+                          style={styles.adjustBtn} 
+                          onPress={() => {
+                            let d = parseInt(taskDate) || 1;
+                            d = d === 31 ? 1 : d + 1;
+                            setTaskDate(d.toString());
+                          }}
+                        >
+                          <Text style={[styles.adjustBtnText, { color: theme.text }]}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                      
+                      <Text style={{ color: theme.textMuted, fontSize: 12 }}>/</Text>
+                      
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.inputBg, borderWidth: 1, borderColor: theme.inputBorder, borderRadius: 8, padding: 2 }}>
+                        <TouchableOpacity 
+                          style={styles.adjustBtn} 
+                          onPress={() => {
+                            let m = parseInt(taskMonth) || 1;
+                            m = m === 1 ? 12 : m - 1;
+                            setTaskMonth(m.toString());
+                          }}
+                        >
+                          <Text style={[styles.adjustBtnText, { color: theme.text }]}>-</Text>
+                        </TouchableOpacity>
+                        <Text style={{ width: 22, textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: theme.text }}>{taskMonth.padStart(2, '0')}</Text>
+                        <TouchableOpacity 
+                          style={styles.adjustBtn} 
+                          onPress={() => {
+                            let m = parseInt(taskMonth) || 1;
+                            m = m === 12 ? 1 : m + 1;
+                            setTaskMonth(m.toString());
+                          }}
+                        >
+                          <Text style={[styles.adjustBtnText, { color: theme.text }]}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* Time Selector Widget */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={{ fontSize: 11, color: theme.textMuted }}>Time:</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.inputBg, borderWidth: 1, borderColor: theme.inputBorder, borderRadius: 8, padding: 2 }}>
+                        <TouchableOpacity 
+                          style={styles.adjustBtn} 
+                          onPress={() => {
+                            let h = parseInt(taskHour) || 12;
+                            h = h === 1 ? 12 : h - 1;
+                            setTaskHour(h.toString().padStart(2, '0'));
+                          }}
+                        >
+                          <Text style={[styles.adjustBtnText, { color: theme.text }]}>-</Text>
+                        </TouchableOpacity>
+                        <Text style={{ width: 22, textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: theme.text }}>{taskHour}</Text>
+                        <TouchableOpacity 
+                          style={styles.adjustBtn} 
+                          onPress={() => {
+                            let h = parseInt(taskHour) || 12;
+                            h = h === 12 ? 1 : h + 1;
+                            setTaskHour(h.toString().padStart(2, '0'));
+                          }}
+                        >
+                          <Text style={[styles.adjustBtnText, { color: theme.text }]}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                      
+                      <Text style={{ color: theme.textMuted, fontSize: 12 }}>:</Text>
+                      
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.inputBg, borderWidth: 1, borderColor: theme.inputBorder, borderRadius: 8, padding: 2 }}>
+                        <TouchableOpacity 
+                          style={styles.adjustBtn} 
+                          onPress={() => {
+                            let min = parseInt(taskMinute) || 0;
+                            min = min === 0 ? 45 : min - 15;
+                            setTaskMinute(min.toString().padStart(2, '0'));
+                          }}
+                        >
+                          <Text style={[styles.adjustBtnText, { color: theme.text }]}>-</Text>
+                        </TouchableOpacity>
+                        <Text style={{ width: 22, textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: theme.text }}>{taskMinute}</Text>
+                        <TouchableOpacity 
+                          style={styles.adjustBtn} 
+                          onPress={() => {
+                            let min = parseInt(taskMinute) || 0;
+                            min = min === 45 ? 0 : min + 15;
+                            setTaskMinute(min.toString().padStart(2, '0'));
+                          }}
+                        >
+                          <Text style={[styles.adjustBtnText, { color: theme.text }]}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                      
+                      <TouchableOpacity 
+                        style={[styles.ampmBtn, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6 }]} 
+                        onPress={() => setTaskAmPm(prev => prev === 'AM' ? 'PM' : 'AM')}
+                      >
+                        <Text style={[styles.ampmBtnText, { color: darkMode ? '#818CF8' : '#4F46E5', fontSize: 11, fontWeight: 'bold' }]}>{taskAmPm}</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                  </View>
+                </View>
               </View>
 
               {leadTasks.length > 0 ? (
@@ -2374,11 +2879,18 @@ export default function App() {
                     style={[styles.taskCard, t.is_completed && styles.taskCardCompleted, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
                     onPress={() => handleToggleTask(t.id)}
                   >
-                    <View style={styles.taskLeftRow}>
-                      <View style={[styles.taskCheckbox, t.is_completed && styles.taskCheckboxChecked, { borderColor: theme.border }]} />
-                      <Text style={[styles.taskCardTitle, t.is_completed && styles.taskTitleCompleted, { color: theme.text }]}>
-                        {t.title}
-                      </Text>
+                    <View style={[styles.taskLeftRow, { alignItems: 'flex-start' }]}>
+                      <View style={[styles.taskCheckbox, t.is_completed && styles.taskCheckboxChecked, { borderColor: theme.border, marginTop: 2 }]} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.taskCardTitle, t.is_completed && styles.taskTitleCompleted, { color: theme.text }]}>
+                          {t.title}
+                        </Text>
+                        {t.due_date && (
+                          <Text style={{ color: theme.textMuted, fontSize: 10, marginTop: 4 }}>
+                            📅 Due: {new Date(t.due_date).toLocaleDateString()} at {new Date(t.due_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </Text>
+                        )}
+                      </View>
                     </View>
                   </TouchableOpacity>
                 ))
@@ -2466,12 +2978,18 @@ export default function App() {
           <Text style={[styles.statsSummaryLabel, { color: theme.textMuted }]}>ASSIGNED LEADS</Text>
           <Text style={[styles.statsSummaryVal, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>{myLeads.length}</Text>
         </View>
-        <View style={[styles.statsSummaryCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+        <TouchableOpacity 
+          style={[styles.statsSummaryCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
+          onPress={() => {
+            setPrevScreen('dashboard');
+            setCurrentScreen('tasksList');
+          }}
+        >
           <Text style={[styles.statsSummaryLabel, { color: theme.textMuted }]}>PENDING TASKS</Text>
           <Text style={[styles.statsSummaryVal, { color: '#EF4444' }]}>
-            {tasks.filter(t => !t.is_completed).length}
+            {tasks.filter(t => !t.is_completed && myLeads.map(l => l.id).includes(t.lead_id)).length}
           </Text>
-        </View>
+        </TouchableOpacity>
       </View>
 
       {/* Action Header */}
@@ -2479,14 +2997,14 @@ export default function App() {
         <Text style={[styles.listSectionTitle, { color: theme.text }]}>My Assigned Leads</Text>
         <TouchableOpacity 
           style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#334155' : '#EEF2FF' }]}
-          onPress={() => setIsAddModalOpen(!isAddModalOpen)}
+          onPress={() => setIsAddModalOpen(true)}
         >
-          <Text style={[styles.addBtnHeaderText, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>{isAddModalOpen ? "Close Form" : "+ Create Lead"}</Text>
+          <Text style={[styles.addBtnHeaderText, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>+ Create Lead</Text>
         </TouchableOpacity>
       </View>
 
       {/* Pipeline Stage Horizontal Selector */}
-      <View style={styles.horizontalPipelineContainer}>
+      <View style={[styles.horizontalPipelineContainer, { backgroundColor: theme.cardBg, borderBottomColor: theme.border }]}>
         <ScrollView 
           horizontal={true} 
           showsHorizontalScrollIndicator={false}
@@ -2504,8 +3022,8 @@ export default function App() {
                 onPress={() => setSelectedStageFilter(stage)}
                 style={[
                   styles.pipelineTab, 
-                  { backgroundColor: darkMode ? '#334155' : '#EEF2FF' },
-                  isSelected && { backgroundColor: '#4F46E5' }
+                  { backgroundColor: darkMode ? '#334155' : '#EEF2FF', borderColor: darkMode ? '#475569' : '#E2E8F0' },
+                  isSelected && { backgroundColor: '#4F46E5', borderColor: '#4F46E5' }
                 ]}
               >
                 <Text style={[
@@ -2521,53 +3039,64 @@ export default function App() {
         </ScrollView>
       </View>
 
-      {/* Manual Entry Form Toggle inside list */}
+      {/* Manual Entry Form Popup Modal Overlay */}
       {isAddModalOpen && (
-        <ScrollView style={[styles.inlineAddForm, { backgroundColor: theme.cardBg, borderColor: theme.border }]} nestedScrollEnabled={true}>
-          <Text style={[styles.formHeaderTitle, { color: theme.text }]}>Add Candidate Lead</Text>
-          <TextInput 
-            placeholder="Student Name *" 
-            placeholderTextColor="#94A3B8"
-            value={newLeadName} 
-            onChangeText={setNewLeadName} 
-            style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder }]} 
-          />
-          <TextInput 
-            placeholder="Phone Number *" 
-            placeholderTextColor="#94A3B8"
-            value={newLeadPhone} 
-            onChangeText={setNewLeadPhone} 
-            keyboardType="phone-pad" 
-            style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder }]} 
-          />
-          <TextInput 
-            placeholder="NEET Marks (720 max)" 
-            placeholderTextColor="#94A3B8"
-            value={newLeadNeet} 
-            onChangeText={setNewLeadNeet} 
-            keyboardType="number-pad" 
-            style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder }]} 
-          />
-          <TextInput 
-            placeholder="Budget (Lakhs INR)" 
-            placeholderTextColor="#94A3B8"
-            value={newLeadBudget} 
-            onChangeText={setNewLeadBudget} 
-            keyboardType="number-pad" 
-            style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder }]} 
-          />
-          <TextInput 
-            placeholder="Target Destination (Country/State)" 
-            placeholderTextColor="#94A3B8"
-            value={newLeadDest} 
-            onChangeText={setNewLeadDest} 
-            style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder }]} 
-          />
-          
-          <TouchableOpacity style={styles.submitLeadBtn} onPress={handleAddLead}>
-            <Text style={styles.submitLeadBtnText}>Save Candidate Profile</Text>
-          </TouchableOpacity>
-        </ScrollView>
+        <View style={styles.feedbackModalOverlay}>
+          <View style={[styles.feedbackModalContent, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              <Text style={[styles.feedbackTitle, { color: theme.text }]}>Add Candidate Lead</Text>
+              
+              <TextInput 
+                placeholder="Student Name *" 
+                placeholderTextColor="#94A3B8"
+                value={newLeadName} 
+                onChangeText={setNewLeadName} 
+                style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder, marginBottom: 12 }]} 
+              />
+              <TextInput 
+                placeholder="Phone Number *" 
+                placeholderTextColor="#94A3B8"
+                value={newLeadPhone} 
+                onChangeText={setNewLeadPhone} 
+                keyboardType="phone-pad" 
+                style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder, marginBottom: 12 }]} 
+              />
+              <TextInput 
+                placeholder="NEET Marks (720 max)" 
+                placeholderTextColor="#94A3B8"
+                value={newLeadNeet} 
+                onChangeText={setNewLeadNeet} 
+                keyboardType="number-pad" 
+                style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder, marginBottom: 12 }]} 
+              />
+              <TextInput 
+                placeholder="Budget (Lakhs INR)" 
+                placeholderTextColor="#94A3B8"
+                value={newLeadBudget} 
+                onChangeText={setNewLeadBudget} 
+                keyboardType="number-pad" 
+                style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder, marginBottom: 12 }]} 
+              />
+              <TextInput 
+                placeholder="Target Destination (Country/State)" 
+                placeholderTextColor="#94A3B8"
+                value={newLeadDest} 
+                onChangeText={setNewLeadDest} 
+                style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder, marginBottom: 16 }]} 
+              />
+              
+              <TouchableOpacity style={styles.submitLeadBtn} onPress={handleAddLead}>
+                <Text style={styles.submitLeadBtnText}>Save Candidate Profile</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.cancelModalBtn, { marginTop: 10 }]} 
+                onPress={() => setIsAddModalOpen(false)}
+              >
+                <Text style={[styles.cancelModalBtnText, { color: theme.textMuted, textAlign: 'center' }]}>Cancel</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
       )}
 
       {/* Search Input */}
@@ -2591,6 +3120,7 @@ export default function App() {
                 <TouchableOpacity 
                   style={styles.leadCardClickableArea}
                   onPress={() => {
+                    setPrevScreen('dashboard');
                     setSelectedLead(lead);
                     setCurrentScreen('detail');
                   }}
@@ -2602,20 +3132,7 @@ export default function App() {
                     </View>
                   </View>
                   
-                  <Text style={[styles.leadContactInfo, { color: theme.textMuted }]}>{lead.phone} • {lead.preferred_destination || 'Abroad'}</Text>
-                  
-                  <View style={styles.leadBadgesRow}>
-                    <TouchableOpacity 
-                      style={[styles.statusLabelBadgeTouch, { backgroundColor: darkMode ? '#334155' : '#EEF2FF' }]}
-                      onPress={() => {
-                        setSelectedLead(lead);
-                        setActivePickerType('status');
-                      }}
-                    >
-                      <Text style={[styles.statusLabelBadgeText, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>{lead.status} ▾</Text>
-                    </TouchableOpacity>
-                    <Text style={[styles.sourceLabelBadge, { backgroundColor: darkMode ? '#334155' : '#F1F5F9', color: theme.textMuted }]}>{lead.lead_source}</Text>
-                  </View>
+                  <Text style={[styles.leadContactInfo, { color: theme.textMuted, marginTop: 4 }]}>{lead.phone} • {lead.preferred_destination || 'Abroad'}</Text>
                 </TouchableOpacity>
 
                 {/* Call Shortcut Button */}
@@ -2626,6 +3143,34 @@ export default function App() {
                   <Phone size={16} color="#6366F1" />
                 </TouchableOpacity>
               </View>
+              
+              {/* Badges Row at the bottom of the card, completely separate to prevent click issues */}
+              <View style={[styles.leadBadgesRow, { marginTop: 10 }]}>
+                <TouchableOpacity 
+                  style={[styles.statusLabelBadgeTouch, { backgroundColor: darkMode ? '#334155' : '#EEF2FF' }]}
+                  onPress={() => {
+                    setSelectedLead(lead);
+                    setActivePickerType('status');
+                  }}
+                >
+                  <Text style={[styles.statusLabelBadgeText, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>{lead.status} ▾</Text>
+                </TouchableOpacity>
+
+                {/* Quick Allot/Assignee Badge */}
+                <TouchableOpacity 
+                  style={[styles.statusLabelBadgeTouch, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', marginLeft: 8 }]}
+                  onPress={() => {
+                    setSelectedLead(lead);
+                    setActivePickerType('counsellor');
+                  }}
+                >
+                  <Text style={[styles.statusLabelBadgeText, { color: darkMode ? '#34D399' : '#059669' }]}>
+                    👤 {profiles.find(p => p.id === lead.assigned_counsellor_id)?.full_name || 'Unassigned'} ▾
+                  </Text>
+                </TouchableOpacity>
+
+                <Text style={[styles.sourceLabelBadge, { backgroundColor: darkMode ? '#334155' : '#F1F5F9', color: theme.textMuted, marginLeft: 'auto' }]}>{lead.lead_source}</Text>
+              </View>
             </View>
           ))
         ) : (
@@ -2635,6 +3180,7 @@ export default function App() {
       {renderFeedbackModal()}
       {renderSettingsModal()}
       {renderWhatsAppModal()}
+      {renderPickerModal()}
     </SafeAreaView>
   );
 }
@@ -2845,15 +3391,17 @@ const styles = StyleSheet.create({
   },
   searchBarContainer: {
     marginHorizontal: 20,
+    marginTop: 15,
     marginBottom: 15,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 8,
     backgroundColor: '#FFF',
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     flexDirection: 'row',
-    alignItems: 'center'
+    alignItems: 'center',
+    height: 42
   },
   searchIcon: {
     marginRight: 8
@@ -2861,7 +3409,8 @@ const styles = StyleSheet.create({
   searchTextInput: {
     flex: 1,
     fontSize: 13,
-    color: '#0F172A'
+    color: '#0F172A',
+    paddingVertical: 0
   },
   listScroll: {
     flex: 1,
@@ -3070,14 +3619,15 @@ const styles = StyleSheet.create({
   },
   formSubmitBtn: {
     backgroundColor: '#4F46E5',
-    paddingHorizontal: 15,
+    paddingHorizontal: 18,
     borderRadius: 10,
     justifyContent: 'center',
-    alignItems: 'center'
+    alignItems: 'center',
+    alignSelf: 'stretch'
   },
   formSubmitBtnText: {
     color: '#FFF',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: 'bold'
   },
   noteCard: {
@@ -3202,21 +3752,22 @@ const styles = StyleSheet.create({
     borderColor: '#CBD5E1',
     borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    fontSize: 11,
+    paddingVertical: 10,
+    fontSize: 13,
     color: '#0F172A',
-    marginBottom: 8
+    marginBottom: 8,
+    height: 44
   },
   submitLeadBtn: {
     backgroundColor: '#4F46E5',
-    paddingVertical: 8,
-    borderRadius: 10,
+    paddingVertical: 10,
+    borderRadius: 12,
     alignItems: 'center',
     marginTop: 4
   },
   submitLeadBtnText: {
     color: '#FFF',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: 'bold'
   },
   leadCardHeaderRow: {
@@ -3412,6 +3963,30 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     color: '#4F46E5'
+  },
+  presetBtn: {
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  presetBtnText: {
+    fontSize: 10,
+    fontWeight: '600'
+  },
+  adjustBtn: {
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 4
+  },
+  adjustBtnText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    lineHeight: 18
   },
   modalActionsRow: {
     flexDirection: 'row',
