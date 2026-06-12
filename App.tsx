@@ -15,6 +15,8 @@ import * as Device from 'expo-device';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 
 const isExpoGo = Constants.appOwnership === 'expo' || Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 const Notifications = isExpoGo ? null : require('expo-notifications');
@@ -94,6 +96,7 @@ export interface Profile {
   full_name: string;
   role: 'admin' | 'manager' | 'counsellor';
   phone?: string;
+  tenant_id?: string;
 }
 
 export interface Lead {
@@ -112,6 +115,8 @@ export interface Lead {
   tags: string[];
   score: number;
   created_at: string;
+  pipeline_id?: string | null;
+  whatsapp_number?: string;
 }
 
 export interface Note {
@@ -138,6 +143,8 @@ export interface ActivityLog {
   description: string;
   created_at: string;
   actor_name: string;
+  actor_id?: string;
+  tenant_id?: string;
 }
 
 export interface VisaApplication {
@@ -173,6 +180,60 @@ export interface VisaUploadedDoc {
   is_issuance: boolean;
 }
 
+export interface PipelineStage {
+  id: string;
+  name: string;
+}
+
+export interface Pipeline {
+  id: string;
+  name: string;
+  stages: PipelineStage[];
+  is_default: boolean;
+  tenant_id: string;
+}
+
+export interface PipelineAccess {
+  id: string;
+  pipeline_id: string;
+  profile_id: string;
+  tenant_id: string;
+}
+
+export interface Partner {
+  id: string;
+  business_name: string;
+}
+
+export interface PartnerStudent {
+  id: string;
+  partner_id: string;
+  first_name: string;
+  last_name: string;
+  email?: string;
+  phone?: string;
+  destination_country: string;
+  target_university: string;
+  application_status: string;
+  crm_lead_id?: string | null;
+}
+
+export interface PartnerUploadedDoc {
+  id: string;
+  student_id: string;
+  document_name: string;
+  file_url: string;
+  file_name: string;
+  verification_status: 'pending' | 'verified' | 'rejected';
+}
+
+export interface PartnerCollege {
+  id: string;
+  name: string;
+  country: string;
+  required_docs: string[];
+}
+
 // --- MOCK CONSTANTS ---
 const MOCK_PROFILES: Profile[] = [
   { id: 'user-counsellor-1', full_name: 'Amit Verma', role: 'counsellor', phone: '+919876543210' },
@@ -197,6 +258,42 @@ const PIPELINE_STAGES = [
   'Documents collected',
   'Closed Won',
   'Closed Lost'
+];
+
+const defaultPipelines: Pipeline[] = [
+  {
+    id: 'pipeline-sales-default',
+    name: 'Sales Pipeline',
+    is_default: true,
+    tenant_id: 'default',
+    stages: [
+      { id: '1st followup', name: '1st followup' },
+      { id: 'Discussion stage', name: 'Discussion stage' },
+      { id: 'Connected to manager', name: 'Connected to manager' },
+      { id: 'Documents collected', name: 'Documents collected' },
+      { id: 'Closed Won', name: 'Closed Won' },
+      { id: 'Closed Lost', name: 'Closed Lost' }
+    ]
+  },
+  {
+    id: 'pipeline-visa-default',
+    name: 'Visa/Post-Closing Pipeline',
+    is_default: false,
+    tenant_id: 'default',
+    stages: [
+      { id: 'Document Collection', name: 'Document Collection' },
+      { id: 'Apostille/Verification', name: 'Apostille/Verification' },
+      { id: 'Embassy Submission', name: 'Embassy Submission' },
+      { id: 'Visa Issued', name: 'Visa Issued' },
+      { id: 'Flyer/Pre-departure', name: 'Flyer/Pre-departure' }
+    ]
+  }
+];
+
+const defaultColleges: PartnerCollege[] = [
+  { id: '1', name: 'Tbilisi State Medical University', country: 'Georgia', required_docs: ['Passport Copy', '12th Marksheet', 'NEET Score Card'] },
+  { id: '2', name: 'New Vision University', country: 'Georgia', required_docs: ['Passport Copy', '12th Marksheet', 'NEET Score Card', 'Police Clearance Certificate'] },
+  { id: '3', name: 'Orenburg State Medical University', country: 'Russia', required_docs: ['Passport Copy', '12th Marksheet', 'NEET Score Card', 'Medical Health Certificate'] }
 ];
 
 const INITIAL_LEADS: Lead[] = [
@@ -355,7 +452,17 @@ export default function App() {
   
   // Modals / Input Toggles
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [detailTab, setDetailTab] = useState<'notes' | 'tasks' | 'chat'>('notes');
+  const [detailTab, setDetailTab] = useState<'notes' | 'tasks' | 'chat' | 'checklist'>('notes');
+
+  // Pipelines & Partner portal integration states
+  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
+  const [pipelineAccess, setPipelineAccess] = useState<PipelineAccess[]>([]);
+  const [colleges, setColleges] = useState<PartnerCollege[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
+  const [partnerStudents, setPartnerStudents] = useState<PartnerStudent[]>([]);
+  const [partnerUploadedDocs, setPartnerUploadedDocs] = useState<PartnerUploadedDoc[]>([]);
+  const [referredStudentSelectId, setReferredStudentSelectId] = useState<string>('');
+  const [activeDashboardPipelineId, setActiveDashboardPipelineId] = useState<string>('');
   
   // Call Feedback States
   const [feedbackLead, setFeedbackLead] = useState<Lead | null>(null);
@@ -375,7 +482,7 @@ export default function App() {
   const [taskAmPm, setTaskAmPm] = useState('AM');
   
   // Call/Counsellor Select Picker overlay state
-  const [activePickerType, setActivePickerType] = useState<'status' | 'counsellor' | null>(null);
+  const [activePickerType, setActivePickerType] = useState<'status' | 'counsellor' | 'pipeline' | null>(null);
   
   // Lead Form States
   const [newLeadName, setNewLeadName] = useState('');
@@ -511,6 +618,47 @@ export default function App() {
       setVisaUploadedDocs((visaUpDocsData || []) as VisaUploadedDoc[]);
       await AsyncStorage.setItem('m_visa_up_docs', JSON.stringify(visaUpDocsData || []));
 
+      // 10. Fetch Pipelines & Access
+      const tenantId = currentUser?.tenant_id || 'default';
+      const { data: pipelinesData } = await supabase
+        .from('pipelines')
+        .select('*')
+        .eq('tenant_id', tenantId);
+      setPipelines((pipelinesData || []) as Pipeline[]);
+      await AsyncStorage.setItem('m_pipelines', JSON.stringify(pipelinesData || []));
+
+      const { data: pipelineAccessData } = await supabase
+        .from('pipeline_access')
+        .select('*')
+        .eq('tenant_id', tenantId);
+      setPipelineAccess((pipelineAccessData || []) as PipelineAccess[]);
+      await AsyncStorage.setItem('m_pipeline_access', JSON.stringify(pipelineAccessData || []));
+
+      // 11. Fetch Partner integration data
+      const { data: collegesData } = await supabase
+        .from('partner_colleges')
+        .select('*');
+      setColleges((collegesData || []) as PartnerCollege[]);
+      await AsyncStorage.setItem('m_colleges', JSON.stringify(collegesData || []));
+
+      const { data: partnersData } = await supabase
+        .from('partners')
+        .select('*');
+      setPartners((partnersData || []) as Partner[]);
+      await AsyncStorage.setItem('m_partners', JSON.stringify(partnersData || []));
+
+      const { data: partnerStudentsData } = await supabase
+        .from('partner_students')
+        .select('*');
+      setPartnerStudents((partnerStudentsData || []) as PartnerStudent[]);
+      await AsyncStorage.setItem('m_partner_students', JSON.stringify(partnerStudentsData || []));
+
+      const { data: partnerUploadedDocsData } = await supabase
+        .from('partner_uploaded_docs')
+        .select('*');
+      setPartnerUploadedDocs((partnerUploadedDocsData || []) as PartnerUploadedDoc[]);
+      await AsyncStorage.setItem('m_partner_uploaded_docs', JSON.stringify(partnerUploadedDocsData || []));
+
     } catch (e: any) {
       console.error("Supabase data fetch error: ", e);
       Alert.alert("Sync Notice", "Failed to sync with server. Running in offline cached mode.");
@@ -523,6 +671,16 @@ export default function App() {
       const cachedLogs = await AsyncStorage.getItem('m_logs');
       const cachedChat = await AsyncStorage.getItem('m_chat');
       const cachedTemplates = await AsyncStorage.getItem('m_whatsapp_templates');
+      const cachedVisaApps = await AsyncStorage.getItem('m_visa_apps');
+      const cachedVisaReq = await AsyncStorage.getItem('m_visa_req_docs');
+      const cachedVisaUp = await AsyncStorage.getItem('m_visa_up_docs');
+      
+      const cachedPipelines = await AsyncStorage.getItem('m_pipelines');
+      const cachedPipelineAccess = await AsyncStorage.getItem('m_pipeline_access');
+      const cachedColleges = await AsyncStorage.getItem('m_colleges');
+      const cachedPartners = await AsyncStorage.getItem('m_partners');
+      const cachedPartnerStudents = await AsyncStorage.getItem('m_partner_students');
+      const cachedPartnerUploadedDocs = await AsyncStorage.getItem('m_partner_uploaded_docs');
 
       if (cachedProfiles) setProfiles(JSON.parse(cachedProfiles));
       if (cachedLeads) setLeads(JSON.parse(cachedLeads));
@@ -530,11 +688,48 @@ export default function App() {
       if (cachedTasks) setTasks(JSON.parse(cachedTasks));
       if (cachedLogs) setLogs(JSON.parse(cachedLogs));
       if (cachedChat) setChatHistory(JSON.parse(cachedChat));
+      if (cachedVisaApps) setVisaApplications(JSON.parse(cachedVisaApps));
+      if (cachedVisaReq) setVisaRequiredDocs(JSON.parse(cachedVisaReq));
+      if (cachedVisaUp) setVisaUploadedDocs(JSON.parse(cachedVisaUp));
+
       if (cachedTemplates) {
         setWhatsappTemplates(JSON.parse(cachedTemplates));
       } else {
         setWhatsappTemplates(DEFAULT_TEMPLATES);
       }
+
+      if (cachedPipelines) {
+        setPipelines(JSON.parse(cachedPipelines));
+      } else {
+        setPipelines(defaultPipelines);
+        await AsyncStorage.setItem('m_pipelines', JSON.stringify(defaultPipelines));
+      }
+
+      if (cachedPipelineAccess) {
+        setPipelineAccess(JSON.parse(cachedPipelineAccess));
+      } else {
+        const defaultAccess = [
+          { id: 'pa-1', pipeline_id: 'pipeline-sales-default', profile_id: 'user-admin', tenant_id: 'default' },
+          { id: 'pa-2', pipeline_id: 'pipeline-visa-default', profile_id: 'user-admin', tenant_id: 'default' },
+          { id: 'pa-3', pipeline_id: 'pipeline-sales-default', profile_id: 'user-manager', tenant_id: 'default' },
+          { id: 'pa-4', pipeline_id: 'pipeline-visa-default', profile_id: 'user-manager', tenant_id: 'default' },
+          { id: 'pa-5', pipeline_id: 'pipeline-sales-default', profile_id: 'user-counsellor-1', tenant_id: 'default' },
+          { id: 'pa-6', pipeline_id: 'pipeline-visa-default', profile_id: 'user-counsellor-1', tenant_id: 'default' }
+        ];
+        setPipelineAccess(defaultAccess);
+        await AsyncStorage.setItem('m_pipeline_access', JSON.stringify(defaultAccess));
+      }
+
+      if (cachedColleges) {
+        setColleges(JSON.parse(cachedColleges));
+      } else {
+        setColleges(defaultColleges);
+        await AsyncStorage.setItem('m_colleges', JSON.stringify(defaultColleges));
+      }
+
+      setPartners(cachedPartners ? JSON.parse(cachedPartners) : []);
+      setPartnerStudents(cachedPartnerStudents ? JSON.parse(cachedPartnerStudents) : []);
+      setPartnerUploadedDocs(cachedPartnerUploadedDocs ? JSON.parse(cachedPartnerUploadedDocs) : []);
     } finally {
       setIsLoading(false);
     }
@@ -1558,31 +1753,339 @@ export default function App() {
     if (!selectedLead) return;
     
     try {
-      const { error } = await supabase
-        .from('leads')
-        .update({ [field]: value, updated_at: new Date().toISOString() })
-        .eq('id', selectedLead.id);
+      let offline = false;
+      try {
+        const { error } = await supabase
+          .from('leads')
+          .update({ [field]: value, updated_at: new Date().toISOString() })
+          .eq('id', selectedLead.id);
 
-      if (error) throw error;
+        if (error) throw error;
 
-      // Add activity log
-      const desc = field === 'status' 
-        ? `Pipeline status changed to "${value}"` 
-        : `Assigned counsellor changed to "${profiles.find(p => p.id === value)?.full_name || 'Unassigned'}"`;
-        
-      await supabase.from('activity_logs').insert([{
-        lead_id: selectedLead.id,
-        actor_id: currentUser?.id,
-        action_type: field === 'status' ? 'status_updated' : 'counsellor_assigned',
-        description: desc
-      }]);
+        const desc = field === 'status' 
+          ? `Pipeline status changed to "${value}"` 
+          : `Assigned counsellor changed to "${profiles.find(p => p.id === value)?.full_name || 'Unassigned'}"`;
+          
+        await supabase.from('activity_logs').insert([{
+          lead_id: selectedLead.id,
+          actor_id: currentUser?.id,
+          action_type: field === 'status' ? 'status_updated' : 'counsellor_assigned',
+          description: desc
+        }]);
+      } catch (dbErr) {
+        console.warn("Offline lead update fallback:", dbErr);
+        offline = true;
+      }
 
       // Update state locally
       setSelectedLead(prev => prev ? { ...prev, [field]: value } : null);
-      setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, [field]: value } : l));
+      setLeads(prev => {
+        const updated = prev.map(l => l.id === selectedLead.id ? { ...l, [field]: value } : l);
+        AsyncStorage.setItem('m_leads', JSON.stringify(updated));
+        return updated;
+      });
+
+      if (offline) {
+        const desc = field === 'status' 
+          ? `Pipeline status changed to "${value}"` 
+          : `Assigned counsellor changed to "${profiles.find(p => p.id === value)?.full_name || 'Unassigned'}"`;
+        const log: ActivityLog = {
+          id: `log-${Date.now()}`,
+          lead_id: selectedLead.id,
+          actor_id: currentUser?.id || 'system',
+          action_type: field === 'status' ? 'status_updated' : 'counsellor_assigned',
+          description: desc,
+          created_at: new Date().toISOString(),
+          actor_name: currentUser?.full_name || 'System'
+        };
+        setLogs(prev => {
+          const updated = [log, ...prev];
+          AsyncStorage.setItem('m_logs', JSON.stringify(updated));
+          return updated;
+        });
+      }
 
     } catch (e: any) {
       Alert.alert("Update Failed", e.message || "Could not update lead field.");
+    }
+  };
+
+  const handleSwitchPipeline = async (leadId: string, pipelineId: string) => {
+    try {
+      const pObj = pipelines.find(p => p.id === pipelineId);
+      const initialStage = pObj && pObj.stages && pObj.stages[0] ? pObj.stages[0].name : '1st followup';
+
+      let offline = false;
+      try {
+        const { error } = await supabase
+          .from('leads')
+          .update({
+            pipeline_id: pipelineId,
+            status: initialStage,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', leadId);
+        if (error) throw error;
+
+        await supabase.from('activity_logs').insert([{
+          lead_id: leadId,
+          actor_id: currentUser?.id,
+          action_type: 'status_updated',
+          description: `Switched pipeline to "${pObj?.name || 'Unknown'}" (Stage reset to "${initialStage}")`
+        }]);
+      } catch (dbErr) {
+        console.warn("Offline switch pipeline fallback:", dbErr);
+        offline = true;
+      }
+
+      setLeads(prev => {
+        const updated = prev.map(l => {
+          if (l.id === leadId) {
+            return { ...l, pipeline_id: pipelineId, status: initialStage, updated_at: new Date().toISOString() };
+          }
+          return l;
+        });
+        AsyncStorage.setItem('m_leads', JSON.stringify(updated));
+        return updated;
+      });
+
+      if (offline) {
+        const log: ActivityLog = {
+          id: `log-${Date.now()}`,
+          lead_id: leadId,
+          actor_id: currentUser?.id || 'system',
+          action_type: 'status_updated',
+          description: `Switched pipeline to "${pObj?.name || 'Unknown'}" (Stage reset to "${initialStage}")`,
+          created_at: new Date().toISOString(),
+          actor_name: currentUser?.full_name || 'System'
+        };
+        setLogs(prev => {
+          const updated = [log, ...prev];
+          AsyncStorage.setItem('m_logs', JSON.stringify(updated));
+          return updated;
+        });
+      }
+
+      setSelectedLead(prev => prev ? { ...prev, pipeline_id: pipelineId, status: initialStage } : null);
+      Alert.alert('Pipeline Changed', `Successfully switched lead to ${pObj?.name || 'pipeline'}.`);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not switch pipeline.');
+    }
+  };
+
+  const connectLeadToPartnerStudent = async (leadId: string, studentId: string) => {
+    try {
+      const visaPipe = pipelines.find(p => p.name === 'Visa/Post-Closing Pipeline');
+      const visaPipeId = visaPipe?.id || null;
+      const initialStage = visaPipe?.stages[0]?.name || 'Document Collection';
+
+      let offline = false;
+      try {
+        const { error: studentErr } = await supabase
+          .from('partner_students')
+          .update({ crm_lead_id: leadId, application_status: 'converted', updated_at: new Date().toISOString() })
+          .eq('id', studentId);
+        if (studentErr) throw studentErr;
+
+        const { error: leadErr } = await supabase
+          .from('leads')
+          .update({
+            pipeline_id: visaPipeId,
+            status: initialStage,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', leadId);
+        if (leadErr) throw leadErr;
+
+        const student = partnerStudents.find(ps => ps.id === studentId);
+        const partner = partners.find(p => p.id === student?.partner_id);
+        const studentName = student ? `${student.first_name} ${student.last_name}` : 'Referred Student';
+        const partnerName = partner?.business_name || 'Partner Agency';
+
+        await supabase.from('activity_logs').insert([{
+          lead_id: leadId,
+          actor_id: currentUser?.id,
+          action_type: 'assigned',
+          description: `Linked to referred student ${studentName} from ${partnerName}. Transitioned to Visa/Post-Closing Pipeline.`
+        }]);
+      } catch (dbErr) {
+        console.warn("Offline connect fallback:", dbErr);
+        offline = true;
+      }
+
+      setPartnerStudents(prev => {
+        const updated = prev.map(ps => {
+          if (ps.id === studentId) {
+            return { ...ps, crm_lead_id: leadId, application_status: 'converted', updated_at: new Date().toISOString() };
+          }
+          return ps;
+        });
+        AsyncStorage.setItem('m_partner_students', JSON.stringify(updated));
+        return updated;
+      });
+
+      setLeads(prev => {
+        const updated = prev.map(l => {
+          if (l.id === leadId) {
+            return { ...l, pipeline_id: visaPipeId, status: initialStage, updated_at: new Date().toISOString() };
+          }
+          return l;
+        });
+        AsyncStorage.setItem('m_leads', JSON.stringify(updated));
+        return updated;
+      });
+
+      if (offline) {
+        const student = partnerStudents.find(ps => ps.id === studentId);
+        const partner = partners.find(p => p.id === student?.partner_id);
+        const studentName = student ? `${student.first_name} ${student.last_name}` : 'Referred Student';
+        const partnerName = partner?.business_name || 'Partner Agency';
+
+        const log: ActivityLog = {
+          id: `log-${Date.now()}`,
+          lead_id: leadId,
+          actor_id: currentUser?.id || 'system',
+          action_type: 'assigned',
+          description: `Linked to referred student ${studentName} from ${partnerName}. Transitioned to Visa/Post-Closing Pipeline.`,
+          created_at: new Date().toISOString(),
+          actor_name: currentUser?.full_name || 'System'
+        };
+        setLogs(prev => {
+          const updated = [log, ...prev];
+          AsyncStorage.setItem('m_logs', JSON.stringify(updated));
+          return updated;
+        });
+      }
+
+      setSelectedLead(prev => prev ? { ...prev, pipeline_id: visaPipeId, status: initialStage } : null);
+      Alert.alert("Success", "Student connected successfully! Lead transitioned to Visa/Post-Closing Pipeline.");
+    } catch (e: any) {
+      Alert.alert("Error", e.message || "Failed to connect referred student.");
+    }
+  };
+
+  const disconnectLeadFromPartnerStudent = async (studentId: string) => {
+    try {
+      const student = partnerStudents.find(ps => ps.id === studentId);
+      const leadId = student?.crm_lead_id;
+
+      let offline = false;
+      try {
+        const { error: studentErr } = await supabase
+          .from('partner_students')
+          .update({ crm_lead_id: null, application_status: 'referred', updated_at: new Date().toISOString() })
+          .eq('id', studentId);
+        if (studentErr) throw studentErr;
+
+        if (leadId) {
+          const studentName = student ? `${student.first_name} ${student.last_name}` : 'Referred Student';
+          await supabase.from('activity_logs').insert([{
+            lead_id: leadId,
+            actor_id: currentUser?.id,
+            action_type: 'assigned',
+            description: `Unlinked from referred student ${studentName}`
+          }]);
+        }
+      } catch (dbErr) {
+        console.warn("Offline disconnect fallback:", dbErr);
+        offline = true;
+      }
+
+      setPartnerStudents(prev => {
+        const updated = prev.map(ps => {
+          if (ps.id === studentId) {
+            return { ...ps, crm_lead_id: null, application_status: 'referred', updated_at: new Date().toISOString() };
+          }
+          return ps;
+        });
+        AsyncStorage.setItem('m_partner_students', JSON.stringify(updated));
+        return updated;
+      });
+
+      if (leadId && offline) {
+        const studentName = student ? `${student.first_name} ${student.last_name}` : 'Referred Student';
+        const log: ActivityLog = {
+          id: `log-${Date.now()}`,
+          lead_id: leadId,
+          actor_id: currentUser?.id || 'system',
+          action_type: 'assigned',
+          description: `Unlinked from referred student ${studentName}`,
+          created_at: new Date().toISOString(),
+          actor_name: currentUser?.full_name || 'System'
+        };
+        setLogs(prev => {
+          const updated = [log, ...prev];
+          AsyncStorage.setItem('m_logs', JSON.stringify(updated));
+          return updated;
+        });
+      }
+
+      Alert.alert("Success", "Student disconnected successfully.");
+    } catch (e: any) {
+      Alert.alert("Error", e.message || "Failed to disconnect student.");
+    }
+  };
+
+  const verifyPartnerDoc = async (docId: string, status: 'verified' | 'rejected') => {
+    try {
+      const doc = partnerUploadedDocs.find(d => d.id === docId);
+      if (!doc) throw new Error("Document not found");
+
+      const student = partnerStudents.find(ps => ps.id === doc.student_id);
+      const leadId = student?.crm_lead_id;
+
+      let offline = false;
+      try {
+        const { error } = await supabase
+          .from('partner_uploaded_docs')
+          .update({ verification_status: status, updated_at: new Date().toISOString() })
+          .eq('id', docId);
+        if (error) throw error;
+
+        if (leadId) {
+          await supabase.from('activity_logs').insert([{
+            lead_id: leadId,
+            actor_id: currentUser?.id,
+            action_type: 'status_change',
+            description: `Partner document '${doc.document_name}' has been ${status}`
+          }]);
+        }
+      } catch (dbErr) {
+        console.warn("Offline verify fallback:", dbErr);
+        offline = true;
+      }
+
+      setPartnerUploadedDocs(prev => {
+        const updated = prev.map(d => {
+          if (d.id === docId) {
+            return { ...d, verification_status: status, updated_at: new Date().toISOString() };
+          }
+          return d;
+        });
+        AsyncStorage.setItem('m_partner_uploaded_docs', JSON.stringify(updated));
+        return updated;
+      });
+
+      if (leadId && offline) {
+        const log: ActivityLog = {
+          id: `log-${Date.now()}`,
+          lead_id: leadId,
+          actor_id: currentUser?.id || 'system',
+          action_type: 'status_change',
+          description: `Partner document '${doc.document_name}' has been ${status}`,
+          created_at: new Date().toISOString(),
+          actor_name: currentUser?.full_name || 'System'
+        };
+        setLogs(prev => {
+          const updated = [log, ...prev];
+          AsyncStorage.setItem('m_logs', JSON.stringify(updated));
+          return updated;
+        });
+      }
+
+      Alert.alert("Success", `Document status updated to ${status}.`);
+    } catch (e: any) {
+      Alert.alert("Error", e.message || "Failed to update document status.");
     }
   };
 
@@ -1590,10 +2093,28 @@ export default function App() {
     if (!activePickerType || !selectedLead) return null;
 
     const isStatus = activePickerType === 'status';
-    const title = isStatus ? 'Change Pipeline Status' : 'Assign Counsellor';
-    const options = isStatus 
-      ? PIPELINE_STAGES 
-      : [...profiles.filter(p => p.role === 'counsellor').map(p => ({ id: p.id, name: p.full_name })), { id: null, name: 'Unassigned' }];
+    const isPipeline = activePickerType === 'pipeline';
+    
+    let title = '';
+    let options: any[] = [];
+    
+    if (isPipeline) {
+      title = 'Select Pipeline';
+      const userPipelines = pipelines.filter(p => 
+        currentUser?.role === 'admin' || 
+        pipelineAccess.some(pa => pa.pipeline_id === p.id && pa.profile_id === currentUser?.id) ||
+        p.id === selectedLead.pipeline_id
+      );
+      options = userPipelines.map(p => ({ id: p.id, name: p.name }));
+    } else if (isStatus) {
+      title = 'Change Pipeline Status';
+      const activePipeline = pipelines.find(p => p.id === selectedLead.pipeline_id) || pipelines.find(p => p.is_default) || pipelines[0];
+      const stages = activePipeline ? activePipeline.stages.map((s: any) => s.name) : PIPELINE_STAGES;
+      options = stages;
+    } else {
+      title = 'Assign Counsellor';
+      options = [...profiles.filter(p => p.role === 'counsellor').map(p => ({ id: p.id, name: p.full_name })), { id: null, name: 'Unassigned' }];
+    }
 
     return (
       <View style={styles.feedbackModalOverlay}>
@@ -1604,16 +2125,26 @@ export default function App() {
             {options.map((opt, idx) => {
               const optionId = typeof opt === 'string' ? opt : opt.id;
               const optionLabel = typeof opt === 'string' ? opt : opt.name;
-              const isSelected = isStatus 
-                ? selectedLead.status === optionId 
-                : selectedLead.assigned_counsellor_id === optionId;
+              
+              let isSelected = false;
+              if (isPipeline) {
+                isSelected = (selectedLead.pipeline_id || pipelines.find(p => p.is_default)?.id) === optionId;
+              } else if (isStatus) {
+                isSelected = selectedLead.status === optionId;
+              } else {
+                isSelected = selectedLead.assigned_counsellor_id === optionId;
+              }
 
               return (
                 <TouchableOpacity
                   key={idx}
                   style={[styles.pickerItemRow, isSelected && styles.pickerItemRowSelected]}
                   onPress={() => {
-                    handleUpdateLeadField(isStatus ? 'status' : 'assigned_counsellor_id', optionId);
+                    if (isPipeline) {
+                      handleSwitchPipeline(selectedLead.id, optionId);
+                    } else {
+                      handleUpdateLeadField(isStatus ? 'status' : 'assigned_counsellor_id', optionId);
+                    }
                     setActivePickerType(null);
                   }}
                 >
@@ -2347,9 +2878,17 @@ export default function App() {
   };
 
   // Filter leads based on logged counselor
+  const currentPipelineId = activeDashboardPipelineId || pipelines.find(p => p.is_default)?.id || pipelines[0]?.id;
+  const activePipeline = pipelines.find(p => p.id === currentPipelineId) || pipelines.find(p => p.is_default) || pipelines[0];
+  const pipelineStages = activePipeline ? activePipeline.stages.map((s: any) => s.name) : PIPELINE_STAGES;
+
+  // Filter leads based on logged counselor and pipeline
   const myLeads = leads.filter(l => {
-    if (currentUser?.role === 'admin' || currentUser?.role === 'manager') return true;
-    return l.assigned_counsellor_id === currentUser?.id;
+    if (currentUser?.role !== 'admin' && currentUser?.role !== 'manager' && l.assigned_counsellor_id !== currentUser?.id) {
+      return false;
+    }
+    const leadPipelineId = l.pipeline_id || pipelines.find(p => p.is_default)?.id;
+    return leadPipelineId === currentPipelineId;
   });
 
   const filteredLeads = myLeads.filter(l => {
@@ -2477,7 +3016,7 @@ export default function App() {
                         />
                         <TouchableOpacity 
                           style={[styles.loginSubmitBtn, isSubmitting && { opacity: 0.7 }]} 
-                          onPress={handleSendOtpRequest}
+                          onPress={sendMobileSmsOtp}
                           disabled={isSubmitting}
                         >
                           {isSubmitting ? (
@@ -2504,7 +3043,7 @@ export default function App() {
                         />
                         <TouchableOpacity 
                           style={[styles.loginSubmitBtn, isSubmitting && { opacity: 0.7 }]} 
-                          onPress={handleVerifyOtpRequest}
+                          onPress={verifyMobileSmsOtp}
                           disabled={isSubmitting}
                         >
                           {isSubmitting ? (
@@ -2545,7 +3084,7 @@ export default function App() {
     const myLeadIds = myLeads.map(l => l.id);
     const pendingTasks = tasks
       .filter(t => !t.is_completed && myLeadIds.includes(t.lead_id))
-      .sort((a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime());
+      .sort((a, b) => new Date(a.due_date || 0).getTime() - new Date(b.due_date || 0).getTime());
 
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
@@ -2568,132 +3107,15 @@ export default function App() {
           {pendingTasks.length > 0 ? (
             pendingTasks.map(task => {
               const lead = leads.find(l => l.id === task.lead_id);
-              const formattedDate = new Date(task.due_date).toLocaleDateString('en-US', {
+              const formattedDate = task.due_date ? new Date(task.due_date).toLocaleDateString('en-US', {
                 month: 'short',
                 day: 'numeric',
                 year: 'numeric'
-              });
-              const formattedTime = new Date(task.due_date).toLocaleTimeString('en-US', {
+              }) : 'N/A';
+              const formattedTime = task.due_date ? new Date(task.due_date).toLocaleTimeString('en-US', {
                 hour: '2-digit',
                 minute: '2-digit'
-              });
-
-              return (
-                <View 
-                  key={task.id} 
-                  style={[
-                    styles.leadItemCard, 
-                    { 
-                      backgroundColor: theme.leadCardBg, 
-                      borderColor: theme.border,
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: 14
-                    }
-                  ]}
-                >
-                  <View style={{ flex: 1, paddingRight: 10 }}>
-                    <Text style={{ fontSize: 14, fontWeight: '700', color: theme.text }}>
-                      {task.title}
-                    </Text>
-                    
-                    {lead && (
-                      <TouchableOpacity 
-                        style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 4 }}
-                        onPress={() => {
-                          setPrevScreen('tasksList');
-                          setSelectedLead(lead);
-                          setCurrentScreen('detail');
-                        }}
-                      >
-                        <User size={12} color={darkMode ? '#818CF8' : '#4F46E5'} />
-                        <Text style={{ fontSize: 12, fontWeight: '600', color: darkMode ? '#818CF8' : '#4F46E5', textDecorationLine: 'underline' }}>
-                          Lead: {lead.name}
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 4 }}>
-                      <Clock size={12} color={theme.textMuted} />
-                      <Text style={{ fontSize: 11, color: theme.textMuted }}>
-                        Due: {formattedDate} at {formattedTime}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Complete Task checkbox button */}
-                  <TouchableOpacity 
-                    style={{ 
-                      width: 28, 
-                      height: 28, 
-                      borderRadius: 14, 
-                      borderWidth: 2, 
-                      borderColor: '#10B981', 
-                      justifyContent: 'center', 
-                      alignItems: 'center',
-                      backgroundColor: 'transparent'
-                    }}
-                    onPress={() => handleToggleTask(task.id)}
-                  >
-                    <Check size={14} color="#10B981" />
-                  </TouchableOpacity>
-                </View>
-              );
-            })
-          ) : (
-            <View style={{ alignItems: 'center', marginTop: 60 }}>
-              <CheckCircle size={48} color="#10B981" style={{ marginBottom: 12 }} />
-              <Text style={{ fontSize: 15, fontWeight: '700', color: theme.text, marginBottom: 4 }}>
-                All caught up!
-              </Text>
-              <Text style={{ fontSize: 13, color: theme.textMuted, textAlign: 'center' }}>
-                You have no scheduled tasks pending.
-              </Text>
-            </View>
-          )}
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
-
-  // --- TASKS LIST VIEW ---
-  if (currentScreen === 'tasksList') {
-    const myLeadIds = myLeads.map(l => l.id);
-    const pendingTasks = tasks
-      .filter(t => !t.is_completed && myLeadIds.includes(t.lead_id))
-      .sort((a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime());
-
-    return (
-      <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
-        <StatusBar barStyle={darkMode ? "light-content" : "dark-content"} />
-        
-        {/* Header */}
-        <View style={[styles.header, { backgroundColor: theme.headerBg, borderBottomColor: theme.border }]}>
-          <TouchableOpacity 
-            style={[styles.backBtn, { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: darkMode ? '#334155' : '#F1F5F9', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }]} 
-            onPress={() => setCurrentScreen('dashboard')}
-          >
-            <ArrowLeft size={16} color={theme.text} />
-            <Text style={{ fontSize: 13, fontWeight: '600', color: theme.text }}>Back</Text>
-          </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: theme.text, flex: 1, textAlign: 'center', marginRight: 50 }]}>Pending Tasks</Text>
-        </View>
-
-        {/* Task List */}
-        <ScrollView style={{ flex: 1, paddingHorizontal: 20, paddingTop: 15 }} contentContainerStyle={{ paddingBottom: 30 }}>
-          {pendingTasks.length > 0 ? (
-            pendingTasks.map(task => {
-              const lead = leads.find(l => l.id === task.lead_id);
-              const formattedDate = new Date(task.due_date).toLocaleDateString('en-US', {
-                month: 'short',
-                day: 'numeric',
-                year: 'numeric'
-              });
-              const formattedTime = new Date(task.due_date).toLocaleTimeString('en-US', {
-                hour: '2-digit',
-                minute: '2-digit'
-              });
+              }) : 'N/A';
 
               return (
                 <View 
@@ -2779,6 +3201,9 @@ export default function App() {
     const leadNotes = notes.filter(n => n.lead_id === selectedLead.id);
     const leadTasks = tasks.filter(t => t.lead_id === selectedLead.id);
     const leadChats = chatHistory.filter(c => c.lead_id === selectedLead.id);
+    const connectedStudent = partnerStudents.find(ps => ps.crm_lead_id === selectedLead.id);
+    const connectedPartner = connectedStudent ? partners.find(p => p.id === connectedStudent.partner_id) : null;
+    const availableStudents = partnerStudents.filter(ps => !ps.crm_lead_id);
 
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
@@ -2820,6 +3245,20 @@ export default function App() {
               <Text style={[styles.detailLabel, { color: theme.textMuted }]}>PHONE NUMBER</Text>
               <Text style={[styles.detailVal, { color: theme.text }]}>{selectedLead.phone}</Text>
             </View>
+
+            {/* Clickable Pipeline row */}
+            <TouchableOpacity 
+              style={[styles.detailsRowClickable, { borderBottomColor: theme.border }]}
+              onPress={() => setActivePickerType('pipeline')}
+            >
+              <Text style={[styles.detailLabel, { color: theme.textMuted }]}>PIPELINE</Text>
+              <View style={styles.pickerValueRow}>
+                <Text style={[styles.detailVal, { color: theme.text }]}>
+                  {pipelines.find(p => p.id === selectedLead.pipeline_id)?.name || pipelines.find(p => p.is_default)?.name || 'Sales Pipeline'}
+                </Text>
+                <Text style={[styles.pickerChevron, { color: theme.textMuted }]}>▾</Text>
+              </View>
+            </TouchableOpacity>
 
             {/* Clickable Status row */}
             <TouchableOpacity 
@@ -2908,7 +3347,7 @@ export default function App() {
 
           {/* TABS Toggles */}
           <View style={[styles.tabsRow, { borderBottomColor: theme.border }]}>
-            {(['notes', 'tasks', 'chat'] as const).map(tab => (
+            {(['notes', 'tasks', 'chat', 'checklist'] as const).map(tab => (
               <TouchableOpacity
                 key={tab}
                 style={[styles.tabBtn, detailTab === tab && styles.tabBtnActive]}
@@ -3210,6 +3649,202 @@ export default function App() {
               </View>
             </View>
           )}
+
+          {/* TAB CONTENTS: CHECKLIST */}
+          {detailTab === 'checklist' && (
+            <View style={styles.tabContentBox}>
+              {!connectedStudent ? (
+                <View style={[styles.connectCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+                  <Text style={[styles.connectCardTitle, { color: theme.text }]}>Connect Referred Student</Text>
+                  <Text style={[styles.connectCardSub, { color: theme.textMuted }]}>
+                    Link this lead to a student referred by a partner agency to fetch their documents and sync statuses.
+                  </Text>
+                  
+                  <View style={[styles.referredSelectWrapper, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder }]}>
+                    <Text style={{ fontSize: 9, fontWeight: '700', color: theme.textMuted, marginBottom: 4 }}>SELECT REFERRED STUDENT</Text>
+                    {availableStudents.length === 0 ? (
+                      <Text style={{ fontSize: 12, color: theme.text, fontWeight: '600', paddingVertical: 10 }}>No unconnected students found</Text>
+                    ) : (
+                      <ScrollView style={{ maxHeight: 150 }} nestedScrollEnabled={true}>
+                        {availableStudents.map(student => {
+                          const partner = partners.find(p => p.id === student.partner_id);
+                          const isSelected = referredStudentSelectId === student.id;
+                          return (
+                            <TouchableOpacity
+                              key={student.id}
+                              onPress={() => setReferredStudentSelectId(student.id)}
+                              style={[
+                                styles.referredSelectItem,
+                                { borderBottomColor: theme.border },
+                                isSelected && { backgroundColor: darkMode ? '#334155' : '#EEF2FF' }
+                              ]}
+                            >
+                              <Text style={{ fontSize: 12, color: theme.text, fontWeight: isSelected ? '700' : '500' }}>
+                                {student.first_name} {student.last_name} ({partner?.business_name || 'Agency'})
+                              </Text>
+                              <Text style={{ fontSize: 10, color: theme.textMuted }}>
+                                Country: {student.destination_country} • College: {student.target_university}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    )}
+                  </View>
+
+                  {availableStudents.length > 0 && (
+                    <TouchableOpacity
+                      style={styles.connectSubmitBtn}
+                      onPress={() => {
+                        if (!referredStudentSelectId) {
+                          Alert.alert("Selection Required", "Please select a student from the list first.");
+                          return;
+                        }
+                        connectLeadToPartnerStudent(selectedLead.id, referredStudentSelectId);
+                      }}
+                    >
+                      <Text style={styles.connectSubmitBtnText}>Link Student Referral</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ) : (
+                <View style={{ gap: 15 }}>
+                  {/* Connected Student Profile Card */}
+                  <View style={[styles.connectedProfileCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={styles.connectedTag}>CONNECTED REFERRAL</Text>
+                      <TouchableOpacity
+                        onPress={() => {
+                          Alert.alert(
+                            "Disconnect Student",
+                            "Are you sure you want to disconnect this student referral?",
+                            [
+                              { text: "Cancel", style: "cancel" },
+                              { text: "Disconnect", style: "destructive", onPress: () => disconnectLeadFromPartnerStudent(connectedStudent.id) }
+                            ]
+                          );
+                        }}
+                        style={styles.disconnectBtn}
+                      >
+                        <Text style={styles.disconnectBtnText}>Disconnect</Text>
+                      </TouchableOpacity>
+                    </View>
+                    
+                    <Text style={[styles.connectedStudentName, { color: theme.text }]}>
+                      {connectedStudent.first_name} {connectedStudent.last_name}
+                    </Text>
+                    
+                    <Text style={[styles.connectedStudentAgency, { color: theme.textMuted }]}>
+                      Agency: <Text style={{ fontWeight: '700', color: theme.text }}>{connectedPartner?.business_name || 'Partner Agency'}</Text>
+                    </Text>
+
+                    <View style={[styles.connectedStudentMetaGrid, { borderTopColor: theme.border }]}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 9, color: theme.textMuted, fontWeight: '700' }}>DESTINATION</Text>
+                        <Text style={{ fontSize: 12, color: theme.text, fontWeight: '600', marginTop: 2 }}>{connectedStudent.destination_country}</Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 9, color: theme.textMuted, fontWeight: '700' }}>UNIVERSITY</Text>
+                        <Text style={{ fontSize: 12, color: theme.text, fontWeight: '600', marginTop: 2 }}>{connectedStudent.target_university}</Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Document Checklist */}
+                  <View style={[styles.checklistCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+                    <Text style={[styles.checklistCardTitle, { color: theme.text }]}>
+                      📄 Document Checklist ({connectedStudent.destination_country})
+                    </Text>
+                    <Text style={[styles.checklistCardSub, { color: theme.textMuted }]}>
+                      Verify or reject files uploaded by the student in the Partner Portal.
+                    </Text>
+
+                    <View style={{ marginTop: 10, gap: 10 }}>
+                      {(() => {
+                        const reqDocNames = new Set<string>();
+                        const country = connectedStudent.destination_country;
+                        if (country) {
+                          visaRequiredDocs
+                            .filter(d => d.country.toLowerCase() === country.toLowerCase() && d.is_required)
+                            .forEach(d => reqDocNames.add(d.document_name));
+                        }
+                        
+                        const targetUniv = connectedStudent.target_university;
+                        if (targetUniv) {
+                          const college = colleges?.find(c => c.name.toLowerCase() === targetUniv.toLowerCase());
+                          if (college && Array.isArray(college.required_docs)) {
+                            college.required_docs.forEach((d: string) => reqDocNames.add(d));
+                          }
+                        }
+
+                        if (reqDocNames.size === 0) {
+                          reqDocNames.add('Passport Copy');
+                          reqDocNames.add('12th Marksheet');
+                          reqDocNames.add('NEET Score Card');
+                        }
+
+                        const docsList = Array.from(reqDocNames);
+
+                        return docsList.map(docName => {
+                          const upload = partnerUploadedDocs.find(
+                            d => d.student_id === connectedStudent.id && d.document_name.toLowerCase() === docName.toLowerCase()
+                          );
+
+                          return (
+                            <View key={docName} style={[styles.checklistDocRow, { borderColor: theme.border, backgroundColor: darkMode ? '#0F172A' : '#F8FAFC' }]}>
+                              <View style={{ flex: 1 }}>
+                                <Text style={[styles.checklistDocName, { color: theme.text }]}>{docName}</Text>
+                                {upload ? (
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                                    <Text style={[
+                                      styles.checklistUploadStatus,
+                                      upload.verification_status === 'verified' && { color: '#10B981' },
+                                      upload.verification_status === 'rejected' && { color: '#EF4444' },
+                                      upload.verification_status === 'pending' && { color: '#F59E0B' }
+                                    ]}>
+                                      {upload.verification_status.toUpperCase()}
+                                    </Text>
+                                    <TouchableOpacity onPress={() => Linking.openURL(upload.file_url)}>
+                                      <Text style={{ fontSize: 10, color: '#3B82F6', textDecorationLine: 'underline' }}>View File</Text>
+                                    </TouchableOpacity>
+                                  </View>
+                                ) : (
+                                  <Text style={[styles.checklistUploadStatus, { color: theme.textMuted, marginTop: 4 }]}>
+                                    NOT UPLOADED
+                                  </Text>
+                                )}
+                              </View>
+
+                              {upload && (
+                                <View style={{ flexDirection: 'row', gap: 8 }}>
+                                  {upload.verification_status !== 'verified' && (
+                                    <TouchableOpacity
+                                      onPress={() => verifyPartnerDoc(upload.id, 'verified')}
+                                      style={[styles.verifyDocBtn, { backgroundColor: '#10B981' }]}
+                                    >
+                                      <Text style={styles.verifyDocBtnText}>Verify</Text>
+                                    </TouchableOpacity>
+                                  )}
+                                  {upload.verification_status !== 'rejected' && (
+                                    <TouchableOpacity
+                                      onPress={() => verifyPartnerDoc(upload.id, 'rejected')}
+                                      style={[styles.verifyDocBtn, { backgroundColor: '#EF4444' }]}
+                                    >
+                                      <Text style={styles.verifyDocBtnText}>Reject</Text>
+                                    </TouchableOpacity>
+                                  )}
+                                </View>
+                              )}
+                            </View>
+                          );
+                        });
+                      })()}
+                    </View>
+                  </View>
+                </View>
+              )}
+            </View>
+          )}
         </ScrollView>
         {renderFeedbackModal()}
         {renderPickerModal()}
@@ -3273,6 +3908,33 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
+      {/* Pipeline Scroll view selector */}
+      {pipelines.length > 0 && (
+        <View style={[styles.pipelineSelectorContainer, { borderBottomColor: theme.border }]}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 15, paddingVertical: 10, gap: 10, flexDirection: 'row' }}>
+            {pipelines.map(p => {
+              const isSelected = currentPipelineId === p.id;
+              return (
+                <TouchableOpacity
+                  key={p.id}
+                  onPress={() => {
+                    setActiveDashboardPipelineId(p.id);
+                    setSelectedStageFilter('All');
+                  }}
+                  style={[
+                    styles.pipelineSelBtn,
+                    { backgroundColor: darkMode ? '#334155' : '#F1F5F9', borderColor: theme.border },
+                    isSelected && { backgroundColor: darkMode ? '#818CF8' : '#4F46E5', borderColor: darkMode ? '#818CF8' : '#4F46E5' }
+                  ]}
+                >
+                  <Text style={[styles.pipelineSelBtnText, { color: theme.textMuted }, isSelected && { color: '#FFF' }]}>{p.name}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
       {/* Pipeline Stage Horizontal Selector */}
       <View style={[styles.horizontalPipelineContainer, { backgroundColor: theme.cardBg, borderBottomColor: theme.border }]}>
         <ScrollView 
@@ -3280,7 +3942,7 @@ export default function App() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.horizontalPipelineScroll}
         >
-          {['All', ...PIPELINE_STAGES].map(stage => {
+          {['All', ...pipelineStages].map(stage => {
             const isSelected = selectedStageFilter === stage;
             const count = stage === 'All' 
               ? myLeads.length 
@@ -4520,18 +5182,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#4F46E5'
   },
-  presetBtn: {
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  presetBtnText: {
-    fontSize: 10,
-    fontWeight: '600'
-  },
+
   adjustBtn: {
     width: 22,
     height: 22,
@@ -4967,4 +5618,151 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#F1F5F9',
   },
+  pipelineSelectorContainer: {
+    borderBottomWidth: 1,
+    paddingVertical: 8,
+  },
+  pipelineSelBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F1F5F9',
+  },
+  pipelineSelBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  connectCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 16,
+    marginBottom: 10,
+  },
+  connectCardTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  connectCardSub: {
+    fontSize: 11,
+    marginBottom: 14,
+    lineHeight: 15,
+  },
+  referredSelectWrapper: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 10,
+    marginBottom: 14,
+  },
+  referredSelectItem: {
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    paddingHorizontal: 6,
+  },
+  connectSubmitBtn: {
+    backgroundColor: '#4F46E5',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  connectSubmitBtnText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  connectedProfileCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 16,
+  },
+  connectedTag: {
+    fontSize: 8,
+    fontWeight: '800',
+    color: '#10B981',
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    overflow: 'hidden',
+  },
+  disconnectBtn: {
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  disconnectBtnText: {
+    color: '#EF4444',
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  connectedStudentName: {
+    fontSize: 15,
+    fontWeight: '800',
+    marginTop: 10,
+  },
+  connectedStudentAgency: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  connectedStudentMetaGrid: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    paddingTop: 12,
+    marginTop: 12,
+  },
+  checklistCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 16,
+  },
+  checklistCardTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  checklistCardSub: {
+    fontSize: 11,
+    marginBottom: 10,
+  },
+  checklistDocRow: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  checklistDocName: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  checklistUploadStatus: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  verifyDocBtn: {
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  verifyDocBtnText: {
+    color: '#FFF',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  eyeButton: {
+    paddingHorizontal: 12,
+  },
+  otpSentText: {
+    color: '#10B981',
+    fontSize: 11,
+    marginBottom: 12,
+    lineHeight: 16,
+  },
 });
+
