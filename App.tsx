@@ -117,6 +117,8 @@ export interface Lead {
   created_at: string;
   pipeline_id?: string | null;
   whatsapp_number?: string;
+  course?: string;
+  updated_at?: string;
 }
 
 export interface Note {
@@ -216,6 +218,8 @@ export interface PartnerStudent {
   target_university: string;
   application_status: string;
   crm_lead_id?: string | null;
+  referral_type?: string;
+  target_program?: string;
 }
 
 export interface PartnerUploadedDoc {
@@ -441,7 +445,7 @@ export default function App() {
   const [generatedOtp, setGeneratedOtp] = useState('');
   const [isOtpSent, setIsOtpSent] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
+  const [isSyncing, setIsSyncing] = useState(false);
   
   const [isLoading, setIsLoading] = useState(true);
   
@@ -2023,6 +2027,170 @@ export default function App() {
       Alert.alert("Success", "Student disconnected successfully.");
     } catch (e: any) {
       Alert.alert("Error", e.message || "Failed to disconnect student.");
+    }
+  };
+
+  const handleSyncPartnerData = async () => {
+    // 1. Find all partner students where crm_lead_id is null
+    const unconnectedStudents = partnerStudents.filter(ps => !ps.crm_lead_id);
+    if (unconnectedStudents.length === 0) {
+      Alert.alert("Sync Complete", "No new unconnected partner referrals found.");
+      return;
+    }
+
+    setIsSyncing(true);
+
+    const visaPipe = pipelines.find(p => p.name === 'Visa/Post-Closing Pipeline');
+    const visaPipeId = visaPipe?.id || null;
+    const visaInitialStage = visaPipe?.stages[0]?.name || 'Document Collection';
+
+    const salesPipe = pipelines.find(p => p.is_default) || pipelines[0];
+    const salesPipeId = salesPipe?.id || null;
+    const salesInitialStage = salesPipe?.stages[0]?.name || '1st followup';
+
+    let importedCount = 0;
+
+    try {
+      const isLiveMode = supabase && currentUser;
+
+      if (isLiveMode) {
+        for (const student of unconnectedStudents) {
+          const partner = partners.find(p => p.id === student.partner_id);
+          const partnerName = partner?.business_name || 'Partner Agency';
+          
+          const isConfirmed = (student.referral_type || 'interested') === 'confirmed';
+          const targetPipeId = isConfirmed ? visaPipeId : salesPipeId;
+          const targetStage = isConfirmed ? visaInitialStage : salesInitialStage;
+
+          // 1. Insert new lead
+          const { data: newLead, error: leadErr } = await supabase
+            .from('leads')
+            .insert([{
+              name: `${student.first_name} ${student.last_name}`,
+              phone: student.phone || '',
+              email: student.email || null,
+              preferred_destination: student.destination_country,
+              course: student.target_program,
+              lead_source: `Partner: ${partnerName}`,
+              status: targetStage,
+              pipeline_id: targetPipeId,
+              tenant_id: 'default'
+            }])
+            .select()
+            .single();
+
+          if (leadErr) {
+            console.error("Error creating lead from partner student:", leadErr);
+            continue;
+          }
+
+          if (newLead) {
+            // 2. Update partner_student reference
+            const { error: studentErr } = await supabase
+              .from('partner_students')
+              .update({ 
+                crm_lead_id: newLead.id, 
+                application_status: isConfirmed ? 'converted' : 'referred', 
+                updated_at: new Date().toISOString() 
+              })
+              .eq('id', student.id);
+
+            if (studentErr) {
+              console.error("Error updating partner student reference:", studentErr);
+              continue;
+            }
+
+            // 3. Create activity log
+            await supabase.from('activity_logs').insert([{
+              lead_id: newLead.id,
+              actor_id: currentUser?.id,
+              action_type: 'assigned',
+              description: `Imported automatically from Partner Portal referral by ${partnerName}. Placed in ${isConfirmed ? 'Visa/Post-Closing' : 'Sales'} Pipeline.`
+            }]);
+
+            importedCount++;
+          }
+        }
+
+        // Re-fetch data if any imported to update the UI
+        if (importedCount > 0) {
+          const { data: leadsList } = await supabase.from('leads').select('*');
+          if (leadsList) setLeads(leadsList);
+          
+          const { data: partStudentsList } = await supabase.from('partner_students').select('*');
+          if (partStudentsList) setPartnerStudents(partStudentsList);
+        }
+
+      } else {
+        // Offline Mock Mode
+        const updatedLeads = [...leads];
+        const updatedStudents = partnerStudents.map(ps => {
+          const matching = unconnectedStudents.find(us => us.id === ps.id);
+          if (matching) {
+            const partner = partners.find(p => p.id === matching.partner_id);
+            const partnerName = partner?.business_name || 'Partner Agency';
+            const isConfirmed = (matching.referral_type || 'interested') === 'confirmed';
+            const targetPipeId = isConfirmed ? visaPipeId : salesPipeId;
+            const targetStage = isConfirmed ? visaInitialStage : salesInitialStage;
+
+            const mockLeadId = `lead-${Date.now()}-${importedCount}`;
+            const newLead: Lead = {
+              id: mockLeadId,
+              name: `${matching.first_name} ${matching.last_name}`,
+              phone: matching.phone || '',
+              email: matching.email || undefined,
+              preferred_destination: matching.destination_country,
+              course: matching.target_program,
+              lead_source: `Partner: ${partnerName}`,
+              status: targetStage,
+              pipeline_id: targetPipeId || undefined,
+              score: 75,
+              tags: [],
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            };
+            updatedLeads.push(newLead);
+
+            const log: ActivityLog = {
+              id: `log-${Date.now()}-${importedCount}`,
+              lead_id: mockLeadId,
+              actor_id: currentUser?.id || 'system',
+              action_type: 'assigned',
+              description: `Imported automatically from Partner Portal referral by ${partnerName}. Placed in ${isConfirmed ? 'Visa/Post-Closing' : 'Sales'} Pipeline.`,
+              created_at: new Date().toISOString(),
+              actor_name: currentUser?.full_name || 'System'
+            };
+            logs.unshift(log);
+
+            importedCount++;
+            return {
+              ...ps,
+              crm_lead_id: mockLeadId,
+              application_status: isConfirmed ? 'converted' : 'referred',
+              updated_at: new Date().toISOString()
+            };
+          }
+          return ps;
+        });
+
+        if (importedCount > 0) {
+          setLeads(updatedLeads);
+          AsyncStorage.setItem('m_leads', JSON.stringify(updatedLeads));
+
+          setPartnerStudents(updatedStudents);
+          AsyncStorage.setItem('m_partner_students', JSON.stringify(updatedStudents));
+
+          setLogs([...logs]);
+          AsyncStorage.setItem('m_logs', JSON.stringify(logs));
+        }
+      }
+
+      Alert.alert("Sync Complete", `Imported ${importedCount} new partner referrals into CRM pipelines.`);
+
+    } catch (err: any) {
+      Alert.alert("Sync Failed", err.message || "Failed to sync referred student records.");
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -3898,13 +4066,26 @@ export default function App() {
       </View>
 
       {/* Action Header */}
-      <View style={styles.actionHeaderRow}>
-        <Text style={[styles.listSectionTitle, { color: theme.text }]}>My Assigned Leads</Text>
+      <View style={[styles.actionHeaderRow, { gap: 6 }]}>
+        <Text style={[styles.listSectionTitle, { color: theme.text, flex: 1 }]} numberOfLines={1}>
+          My Assigned Leads
+        </Text>
+        
         <TouchableOpacity 
-          style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#334155' : '#EEF2FF' }]}
+          style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#1E293B' : '#F0FDF4', borderColor: '#86EFAC', borderWidth: 1, paddingHorizontal: 10 }]}
+          onPress={handleSyncPartnerData}
+          disabled={isSyncing}
+        >
+          <Text style={{ fontSize: 11, fontWeight: '700', color: '#16A34A' }}>
+            {isSyncing ? 'Syncing...' : 'Sync Partner'}
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', paddingHorizontal: 10 }]}
           onPress={() => setIsAddModalOpen(true)}
         >
-          <Text style={[styles.addBtnHeaderText, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>+ Create Lead</Text>
+          <Text style={[styles.addBtnHeaderText, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>+ Lead</Text>
         </TouchableOpacity>
       </View>
 
