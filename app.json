@@ -15,9 +15,7 @@
       "package": "com.perfectscholar.crm",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "foregroundImage": "./assets/ps_crm_app_icon.jpg"
       },
       "predictiveBackGestureEnabled": false
     },
