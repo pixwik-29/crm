@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   StyleSheet, Text, View, ScrollView, TextInput, TouchableOpacity, 
-  SafeAreaView, StatusBar, ActivityIndicator, Alert, Linking, Share, Image, Platform, Clipboard, BackHandler 
+  SafeAreaView, StatusBar, ActivityIndicator, Alert, Linking, Share, Image, Platform, Clipboard, BackHandler,
+  KeyboardAvoidingView
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { 
@@ -2375,136 +2376,155 @@ export default function App() {
     return (
       <SafeAreaView style={styles.loginWrapper}>
         <StatusBar barStyle="light-content" />
-        <ScrollView contentContainerStyle={styles.loginScrollContainer} keyboardShouldPersistTaps="handled">
-          <View style={styles.loginCard}>
-            <Image 
-              source={require('./assets/logo.png')} 
-              style={styles.loginLogoImage} 
-            />
-            <Text style={styles.loginTitle}>Perfect Scholar</Text>
-            <Text style={styles.loginSubtitle}>Lead Management System</Text>
+        <KeyboardAvoidingView 
+          behavior="padding" 
+          style={{ flex: 1 }}
+          keyboardVerticalOffset={Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0}
+        >
+          <ScrollView contentContainerStyle={styles.loginScrollContainer} keyboardShouldPersistTaps="handled">
+            <View style={styles.loginCard}>
+              <Image 
+                source={require('./assets/logo.png')} 
+                style={styles.loginLogoImage} 
+              />
+              <Text style={styles.loginTitle}>Perfect Scholar</Text>
+              <Text style={styles.loginSubtitle}>Lead Management System</Text>
 
-            <View style={styles.loginForm}>
-              {/* Method Selector Tabs */}
-              <View style={styles.loginTabsRow}>
-                <TouchableOpacity 
-                  style={[styles.loginTabButton, loginMethod === 'email' && styles.loginTabButtonActive]}
-                  onPress={() => { setLoginMethod('email'); }}
-                >
-                  <Text style={[styles.loginTabButtonText, loginMethod === 'email' && styles.loginTabButtonTextActive]}>Email</Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  style={[styles.loginTabButton, loginMethod === 'phone' && styles.loginTabButtonActive]}
-                  onPress={() => { setLoginMethod('phone'); }}
-                >
-                  <Text style={[styles.loginTabButtonText, loginMethod === 'phone' && styles.loginTabButtonTextActive]}>Phone OTP</Text>
-                </TouchableOpacity>
-              </View>
-
-              {loginMethod === 'email' ? (
-                <View>
-                  <Text style={styles.inputLabel}>EMAIL ADDRESS</Text>
-                  <TextInput 
-                    style={styles.loginInput}
-                    placeholder="Enter your email address"
-                    placeholderTextColor="#64748B"
-                    value={emailInput}
-                    onChangeText={setEmailInput}
-                    autoCapitalize="none"
-                    keyboardType="email-address"
-                  />
-
-                  <Text style={styles.inputLabel}>PASSWORD</Text>
-                  <View style={styles.passwordInputContainer}>
-                    <TextInput 
-                      style={styles.loginPasswordInput}
-                      placeholder="Enter password"
-                      placeholderTextColor="#64748B"
-                      value={passwordInput}
-                      onChangeText={setPasswordInput}
-                      secureTextEntry={!showPassword}
-                      autoCapitalize="none"
-                    />
-                    <TouchableOpacity 
-                      onPress={() => setShowPassword(!showPassword)}
-                      style={styles.showPasswordBtn}
-                    >
-                      <Text style={styles.showPasswordBtnText}>{showPassword ? "Hide" : "Show"}</Text>
-                    </TouchableOpacity>
-                  </View>
-
+              <View style={styles.loginForm}>
+                {/* Method Selector Tabs */}
+                <View style={styles.loginTabsRow}>
                   <TouchableOpacity 
-                    style={styles.loginSubmitBtn}
-                    onPress={handleMobileLoginSubmit}
-                    disabled={isSubmitting}
+                    style={[styles.loginTabButton, loginMethod === 'email' && styles.loginTabButtonActive]}
+                    onPress={() => { setLoginMethod('email'); }}
                   >
-                    <Text style={styles.loginSubmitBtnText}>Sign In to Workspace</Text>
+                    <Text style={[styles.loginTabButtonText, loginMethod === 'email' && styles.loginTabButtonTextActive]}>Email</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={[styles.loginTabButton, loginMethod === 'phone' && styles.loginTabButtonActive]}
+                    onPress={() => { setLoginMethod('phone'); }}
+                  >
+                    <Text style={[styles.loginTabButtonText, loginMethod === 'phone' && styles.loginTabButtonTextActive]}>Phone OTP</Text>
                   </TouchableOpacity>
                 </View>
-              ) : (
-                <View>
-                  {!isOtpSent ? (
-                    <View>
-                      <Text style={styles.inputLabel}>MOBILE NUMBER</Text>
-                      <TextInput 
-                        style={styles.loginInput}
-                        placeholder="e.g. 9876543210"
-                        placeholderTextColor="#64748B"
-                        value={phoneInput}
-                        onChangeText={setPhoneInput}
-                        keyboardType="phone-pad"
-                      />
 
+                {loginMethod === 'email' ? (
+                  <View>
+                    <Text style={styles.inputLabel}>EMAIL ADDRESS</Text>
+                    <TextInput 
+                      style={styles.loginInput}
+                      placeholder="Enter your email address"
+                      placeholderTextColor="#64748B"
+                      value={emailInput}
+                      onChangeText={setEmailInput}
+                      autoCapitalize="none"
+                      keyboardType="email-address"
+                    />
+
+                    <Text style={styles.inputLabel}>PASSWORD</Text>
+                    <View style={styles.passwordInputContainer}>
+                      <TextInput 
+                        style={styles.loginPasswordInput}
+                        placeholder="Enter account password"
+                        placeholderTextColor="#64748B"
+                        value={passwordInput}
+                        onChangeText={setPasswordInput}
+                        secureTextEntry={!showPassword}
+                        autoCapitalize="none"
+                      />
                       <TouchableOpacity 
-                        style={styles.loginSubmitBtn}
-                        onPress={sendMobileSmsOtp}
-                        disabled={isSubmitting}
+                        style={styles.eyeButton} 
+                        onPress={() => setShowPassword(!showPassword)}
                       >
-                        <Text style={styles.loginSubmitBtnText}>Send OTP Code</Text>
+                        <Eye size={18} color="#64748B" />
                       </TouchableOpacity>
                     </View>
-                  ) : (
-                    <View>
-                      <Text style={styles.inputLabel}>ENTER OTP CODE</Text>
-                      <TextInput 
-                        style={[styles.loginInput, { letterSpacing: 6, textAlign: 'center', fontWeight: 'bold' }]}
-                        placeholder="Enter 6-digit OTP"
-                        placeholderTextColor="#64748B"
-                        value={otpInput}
-                        onChangeText={setOtpInput}
-                        keyboardType="number-pad"
-                        maxLength={6}
-                      />
 
-                      <TouchableOpacity 
-                        style={[styles.loginSubmitBtn, { backgroundColor: '#10B981' }]}
-                        onPress={verifyMobileSmsOtp}
-                        disabled={isSubmitting}
-                      >
-                        <Text style={styles.loginSubmitBtnText}>Verify & Sign In</Text>
-                      </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={[styles.loginSubmitBtn, isSubmitting && { opacity: 0.7 }]} 
+                      onPress={handleMobileLoginSubmit}
+                      disabled={isSubmitting}
+                    >
+                      {isSubmitting ? (
+                        <ActivityIndicator color="#FFF" size="small" />
+                      ) : (
+                        <Text style={styles.loginSubmitBtnText}>Sign In</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View>
+                    {!isOtpSent ? (
+                      <View>
+                        <Text style={styles.inputLabel}>MOBILE NUMBER</Text>
+                        <TextInput 
+                          style={styles.loginInput}
+                          placeholder="e.g. +919876543210"
+                          placeholderTextColor="#64748B"
+                          value={phoneInput}
+                          onChangeText={setPhoneInput}
+                          keyboardType="phone-pad"
+                        />
+                        <TouchableOpacity 
+                          style={[styles.loginSubmitBtn, isSubmitting && { opacity: 0.7 }]} 
+                          onPress={handleSendOtpRequest}
+                          disabled={isSubmitting}
+                        >
+                          {isSubmitting ? (
+                            <ActivityIndicator color="#FFF" size="small" />
+                          ) : (
+                            <Text style={styles.loginSubmitBtnText}>Send OTP Code</Text>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <View>
+                        <Text style={styles.otpSentText}>
+                          A 6-digit verification code has been generated. Use the mock code displayed above or check logs.
+                        </Text>
+                        <Text style={styles.inputLabel}>VERIFICATION CODE</Text>
+                        <TextInput 
+                          style={styles.loginInput}
+                          placeholder="Enter 6-digit OTP"
+                          placeholderTextColor="#64748B"
+                          value={otpInput}
+                          onChangeText={setOtpInput}
+                          keyboardType="number-pad"
+                          maxLength={6}
+                        />
+                        <TouchableOpacity 
+                          style={[styles.loginSubmitBtn, isSubmitting && { opacity: 0.7 }]} 
+                          onPress={handleVerifyOtpRequest}
+                          disabled={isSubmitting}
+                        >
+                          {isSubmitting ? (
+                            <ActivityIndicator color="#FFF" size="small" />
+                          ) : (
+                            <Text style={styles.loginSubmitBtnText}>Verify & Login</Text>
+                          )}
+                        </TouchableOpacity>
 
-                      <TouchableOpacity 
-                        style={styles.changePhoneBtn}
-                        onPress={() => {
-                          setIsOtpSent(false);
-                          setOtpInput('');
-                        }}
-                      >
-                        <Text style={styles.changePhoneBtnText}>Change Phone Number</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                </View>
-              )}
+                        <TouchableOpacity 
+                          style={styles.changePhoneBtn} 
+                          onPress={() => {
+                            setIsOtpSent(false);
+                            setOtpInput('');
+                          }}
+                        >
+                          <Text style={styles.changePhoneBtnText}>Change Phone Number</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                )}
+              </View>
+
+
+              <Text style={styles.sandboxDisclaimer}>
+                Workspace accounts: admin@crm.com, manager@crm.com, amit@crm.com. Protected with secure offline credential matching.
+              </Text>
             </View>
-
-
-            <Text style={styles.sandboxDisclaimer}>
-              Workspace accounts: admin@crm.com, manager@crm.com, amit@crm.com. Protected with secure offline credential matching.
-            </Text>
-          </View>
-        </ScrollView>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     );
   }
@@ -3615,7 +3635,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8FAFC',
-    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0,
+    paddingBottom: Platform.OS === 'android' ? 48 : 0,
   },
   header: {
     paddingHorizontal: 20,
