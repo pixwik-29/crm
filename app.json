@@ -4,11 +4,11 @@
     "slug": "crm",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/ps_crm_app_icon.jpg",
     "scheme": "crm",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/icon.png",
+      "icon": "./assets/ps_crm_app_icon.jpg",
       "bundleIdentifier": "com.perfectscholar.crm"
     },
     "android": {
