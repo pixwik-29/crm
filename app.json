@@ -16,8 +16,7 @@
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/ps_crm_app_icon.jpg"
       },
-      "predictiveBackGestureEnabled": false,
-      "usesCleartextTraffic": true
+      "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -27,6 +26,16 @@
         "projectId": "13d4d5f3-78e7-444f-9e40-fcfdc281b17e"
       }
     },
-    "owner": "nashnewton"
+    "owner": "nashnewton",
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ]
   }
 }
