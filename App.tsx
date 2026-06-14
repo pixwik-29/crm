@@ -17,6 +17,7 @@ import * as Sharing from 'expo-sharing';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import { CSVImportModalMobile } from './components/CSVImportModalMobile';
 
 const isExpoGo = Constants.appOwnership === 'expo' || Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 const Notifications = isExpoGo ? null : require('expo-notifications');
@@ -456,6 +457,7 @@ export default function App() {
   
   // Modals / Input Toggles
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [detailTab, setDetailTab] = useState<'notes' | 'tasks' | 'chat' | 'checklist'>('notes');
 
   // Pipelines & Partner portal integration states
@@ -2027,6 +2029,43 @@ export default function App() {
       Alert.alert("Success", "Student disconnected successfully.");
     } catch (e: any) {
       Alert.alert("Error", e.message || "Failed to disconnect student.");
+    }
+  };
+
+  const handleExportCSV = async () => {
+    try {
+      const headers = ['Name', 'Phone', 'Email', 'Parent Contact', 'NEET Marks', 'Budget', 'Destination', 'Course', 'Source', 'Status', 'Date Captured'];
+      const rows = leads.map(l => [
+        l.name,
+        l.phone,
+        l.email || '',
+        l.parent_contact || '',
+        l.neet_marks || '',
+        l.budget ? (l.budget / 100000).toFixed(1) + ' Lakh' : '',
+        l.preferred_destination || '',
+        l.course || '',
+        l.lead_source,
+        l.status,
+        new Date(l.created_at).toLocaleDateString()
+      ]);
+
+      const csvContent = [headers.join(','), ...rows.map(r => r.map(val => `"${val}"`).join(','))].join('\n');
+      
+      const fileUri = FileSystem.cacheDirectory + `leads_export_${Date.now()}.csv`;
+      await FileSystem.writeAsStringAsync(fileUri, csvContent, { encoding: FileSystem.EncodingType.UTF8 });
+      
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (isAvailable) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: 'text/csv',
+          dialogTitle: 'Export Leads CSV',
+          UTI: 'public.comma-separated-values-text'
+        });
+      } else {
+        Alert.alert("Sharing Not Available", "Native file sharing is not supported on this platform.");
+      }
+    } catch (e: any) {
+      Alert.alert("Export Failed", e.message || "Failed to generate CSV export file.");
     }
   };
 
@@ -4066,26 +4105,40 @@ export default function App() {
       </View>
 
       {/* Action Header */}
-      <View style={[styles.actionHeaderRow, { gap: 6 }]}>
+      <View style={[styles.actionHeaderRow, { gap: 4 }]}>
         <Text style={[styles.listSectionTitle, { color: theme.text, flex: 1 }]} numberOfLines={1}>
-          My Assigned Leads
+          My Leads
         </Text>
         
         <TouchableOpacity 
-          style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#1E293B' : '#F0FDF4', borderColor: '#86EFAC', borderWidth: 1, paddingHorizontal: 10 }]}
+          style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#1E293B' : '#F8FAFC', paddingHorizontal: 6 }]}
+          onPress={handleExportCSV}
+        >
+          <Text style={{ fontSize: 10, fontWeight: '700', color: theme.textMuted }}>Export</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#1E293B' : '#F8FAFC', paddingHorizontal: 6 }]}
+          onPress={() => setIsImportModalOpen(true)}
+        >
+          <Text style={{ fontSize: 10, fontWeight: '700', color: theme.textMuted }}>Import</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#1E293B' : '#F0FDF4', borderColor: '#86EFAC', borderWidth: 1, paddingHorizontal: 6 }]}
           onPress={handleSyncPartnerData}
           disabled={isSyncing}
         >
-          <Text style={{ fontSize: 11, fontWeight: '700', color: '#16A34A' }}>
-            {isSyncing ? 'Syncing...' : 'Sync Partner'}
+          <Text style={{ fontSize: 10, fontWeight: '700', color: '#16A34A' }}>
+            {isSyncing ? 'Sync...' : 'Sync'}
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity 
-          style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', paddingHorizontal: 10 }]}
+          style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', paddingHorizontal: 6 }]}
           onPress={() => setIsAddModalOpen(true)}
         >
-          <Text style={[styles.addBtnHeaderText, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>+ Lead</Text>
+          <Text style={[styles.addBtnHeaderText, { color: darkMode ? '#818CF8' : '#4F46E5', fontSize: 10 }]}>+ Lead</Text>
         </TouchableOpacity>
       </View>
 
@@ -4294,6 +4347,18 @@ export default function App() {
       {renderSettingsModal()}
       {renderWhatsAppModal()}
       {renderPickerModal()}
+      <CSVImportModalMobile
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        darkMode={darkMode}
+        theme={theme}
+        supabase={supabase}
+        currentUser={currentUser}
+        pipelines={pipelines}
+        leads={leads}
+        profiles={profiles}
+        onImportComplete={fetchData}
+      />
     </SafeAreaView>
   );
 
