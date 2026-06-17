@@ -761,12 +761,33 @@ export default function App() {
             await AsyncStorage.removeItem('m_user');
           }
         } else {
-          // Check cached session
-          const cachedUser = await AsyncStorage.getItem('m_user');
-          if (cachedUser) setCurrentUser(JSON.parse(cachedUser));
+          // No active Supabase session — check if we are online.
+          // If online, the session is truly expired/invalid: clear cache and force login.
+          // If offline, restore the cached profile so the app stays usable.
+          let isOnline = false;
+          try {
+            const response = await fetch('https://clients3.google.com/generate_204', {
+              method: 'HEAD',
+              cache: 'no-cache',
+            });
+            isOnline = response.status === 204 || response.ok;
+          } catch (_) {
+            isOnline = false;
+          }
+
+          if (isOnline) {
+            // Online but no session → force login, clear stale cache
+            await AsyncStorage.removeItem('m_user');
+            setCurrentUser(null);
+          } else {
+            // Offline → restore cached user so app is usable without connectivity
+            const cachedUser = await AsyncStorage.getItem('m_user');
+            if (cachedUser) setCurrentUser(JSON.parse(cachedUser));
+          }
         }
       } catch (e) {
         console.error("Session check error: ", e);
+        // On error, fall back to cache so app doesn't brick
         const cachedUser = await AsyncStorage.getItem('m_user');
         if (cachedUser) setCurrentUser(JSON.parse(cachedUser));
       } finally {
@@ -1321,7 +1342,8 @@ export default function App() {
             name: tempName.trim(),
             body: tempBody.trim(),
             attachment_url: tempAttachUrl.trim() || null,
-            attachment_name: tempAttachName.trim() || null
+            attachment_name: tempAttachName.trim() || null,
+            tenant_id: currentUser?.tenant_id || 'default'
           }])
           .select()
           .single();
@@ -1433,7 +1455,8 @@ export default function App() {
       status: '1st followup',
       assigned_counsellor_id: currentUser?.role === 'counsellor' ? currentUser.id : null,
       tags: [newLeadDest].filter(Boolean),
-      score
+      score,
+      tenant_id: currentUser?.tenant_id || 'default'
     };
 
     try {
@@ -1450,7 +1473,8 @@ export default function App() {
         lead_id: newLead.id,
         actor_id: currentUser?.id,
         action_type: 'lead_created',
-        description: `Lead manually entered via Mobile CRM client`
+        description: `Lead manually entered via Mobile CRM client`,
+        tenant_id: currentUser?.tenant_id || 'default'
       }]);
 
       // Refresh data
@@ -1482,7 +1506,8 @@ export default function App() {
         .insert([{
           lead_id: selectedLead.id,
           author_id: currentUser?.id,
-          content: noteText
+          content: noteText,
+          tenant_id: currentUser?.tenant_id || 'default'
         }])
         .select()
         .single();
@@ -1494,7 +1519,8 @@ export default function App() {
         lead_id: selectedLead.id,
         actor_id: currentUser?.id,
         action_type: 'note_added',
-        description: `Note added: "${noteText.substring(0, 20)}..."`
+        description: `Note added: "${noteText.substring(0, 20)}..."`,
+        tenant_id: currentUser?.tenant_id || 'default'
       }]);
 
       setNoteText('');
@@ -1550,7 +1576,8 @@ export default function App() {
           assignee_id: currentUser?.id,
           title: taskText,
           due_date: dueDate,
-          is_completed: false
+          is_completed: false,
+          tenant_id: currentUser?.tenant_id || 'default'
         }]);
 
       if (error) throw error;
@@ -1588,7 +1615,8 @@ export default function App() {
         lead_id: taskToToggle.lead_id,
         actor_id: currentUser?.id,
         action_type: 'task_completed',
-        description: `Marked task "${taskToToggle.title}" as ${nextCompleted ? 'completed' : 'incomplete'}`
+        description: `Marked task "${taskToToggle.title}" as ${nextCompleted ? 'completed' : 'incomplete'}`,
+        tenant_id: currentUser?.tenant_id || 'default'
       }]);
 
       // Update state locally
@@ -1610,7 +1638,8 @@ export default function App() {
         lead_id: lead.id,
         actor_id: currentUser?.id,
         action_type: 'call_placed',
-        description: `Placed phone call to candidate at ${lead.phone}`
+        description: `Placed phone call to candidate at ${lead.phone}`,
+        tenant_id: currentUser?.tenant_id || 'default'
       }]);
     } catch (e) {
       console.error("Call placed logging error:", e);
@@ -1685,7 +1714,8 @@ export default function App() {
           .insert([{
             lead_id: feedbackLead.id,
             author_id: currentUser?.id,
-            content: `[Call Log Note] ${feedbackNotes}`
+            content: `[Call Log Note] ${feedbackNotes}`,
+            tenant_id: currentUser?.tenant_id || 'default'
           }]);
 
         if (noteError) throw noteError;
@@ -1695,7 +1725,8 @@ export default function App() {
           lead_id: feedbackLead.id,
           actor_id: currentUser?.id,
           action_type: 'note_added',
-          description: `Note added via post-call feedback: "${feedbackNotes.substring(0, 20)}..."`
+          description: `Note added via post-call feedback: "${feedbackNotes.substring(0, 20)}..."`,
+          tenant_id: currentUser?.tenant_id || 'default'
         }]);
       }
 
@@ -1730,7 +1761,8 @@ export default function App() {
             assignee_id: currentUser?.id,
             title: `Follow-up call scheduled for ${formattedTime}`,
             due_date: dueDate,
-            is_completed: false
+            is_completed: false,
+            tenant_id: currentUser?.tenant_id || 'default'
           }]);
 
         if (taskError) throw taskError;
@@ -1740,7 +1772,8 @@ export default function App() {
           lead_id: feedbackLead.id,
           actor_id: currentUser?.id,
           action_type: 'task_scheduled',
-          description: `Call follow-up scheduled for ${formattedDate} at ${formattedTime}`
+          description: `Call follow-up scheduled for ${formattedDate} at ${formattedTime}`,
+          tenant_id: currentUser?.tenant_id || 'default'
         }]);
       }
 
@@ -1776,7 +1809,8 @@ export default function App() {
           lead_id: selectedLead.id,
           actor_id: currentUser?.id,
           action_type: field === 'status' ? 'status_updated' : 'counsellor_assigned',
-          description: desc
+          description: desc,
+          tenant_id: currentUser?.tenant_id || 'default'
         }]);
       } catch (dbErr) {
         console.warn("Offline lead update fallback:", dbErr);
@@ -1837,7 +1871,8 @@ export default function App() {
           lead_id: leadId,
           actor_id: currentUser?.id,
           action_type: 'status_updated',
-          description: `Switched pipeline to "${pObj?.name || 'Unknown'}" (Stage reset to "${initialStage}")`
+          description: `Switched pipeline to "${pObj?.name || 'Unknown'}" (Stage reset to "${initialStage}")`,
+          tenant_id: currentUser?.tenant_id || 'default'
         }]);
       } catch (dbErr) {
         console.warn("Offline switch pipeline fallback:", dbErr);
@@ -1912,7 +1947,8 @@ export default function App() {
           lead_id: leadId,
           actor_id: currentUser?.id,
           action_type: 'assigned',
-          description: `Linked to referred student ${studentName} from ${partnerName}. Transitioned to Visa/Post-Closing Pipeline.`
+          description: `Linked to referred student ${studentName} from ${partnerName}. Transitioned to Visa/Post-Closing Pipeline.`,
+          tenant_id: currentUser?.tenant_id || 'default'
         }]);
       } catch (dbErr) {
         console.warn("Offline connect fallback:", dbErr);
@@ -1989,7 +2025,8 @@ export default function App() {
             lead_id: leadId,
             actor_id: currentUser?.id,
             action_type: 'assigned',
-            description: `Unlinked from referred student ${studentName}`
+            description: `Unlinked from referred student ${studentName}`,
+            tenant_id: currentUser?.tenant_id || 'default'
           }]);
         }
       } catch (dbErr) {
@@ -2113,7 +2150,7 @@ export default function App() {
               lead_source: `Partner: ${partnerName}`,
               status: targetStage,
               pipeline_id: targetPipeId,
-              tenant_id: 'default'
+              tenant_id: currentUser?.tenant_id || 'default'
             }])
             .select()
             .single();
@@ -2144,7 +2181,8 @@ export default function App() {
               lead_id: newLead.id,
               actor_id: currentUser?.id,
               action_type: 'assigned',
-              description: `Imported automatically from Partner Portal referral by ${partnerName}. Placed in ${isConfirmed ? 'Visa/Post-Closing' : 'Sales'} Pipeline.`
+              description: `Imported automatically from Partner Portal referral by ${partnerName}. Placed in ${isConfirmed ? 'Visa/Post-Closing' : 'Sales'} Pipeline.`,
+              tenant_id: currentUser?.tenant_id || 'default'
             }]);
 
             importedCount++;
@@ -2254,7 +2292,8 @@ export default function App() {
             lead_id: leadId,
             actor_id: currentUser?.id,
             action_type: 'status_change',
-            description: `Partner document '${doc.document_name}' has been ${status}`
+            description: `Partner document '${doc.document_name}' has been ${status}`,
+            tenant_id: currentUser?.tenant_id || 'default'
           }]);
         }
       } catch (dbErr) {
@@ -2850,7 +2889,8 @@ export default function App() {
         lead_id: lead.id,
         actor_id: currentUser?.id,
         action_type: 'whatsapp_sent',
-        description: `Opened direct WhatsApp chat with welcome message`
+        description: `Opened direct WhatsApp chat with welcome message`,
+        tenant_id: currentUser?.tenant_id || 'default'
       }]);
     } catch (e) {
       console.error("Error logging direct WhatsApp text:", e);
@@ -2886,7 +2926,8 @@ export default function App() {
         lead_id: lead.id,
         actor_id: currentUser?.id,
         action_type: 'whatsapp_sent',
-        description: `Sent WhatsApp template: "${template.name}"`
+        description: `Sent WhatsApp template: "${template.name}"`,
+        tenant_id: currentUser?.tenant_id || 'default'
       }]);
     } catch (e) {
       console.error("Error logging WhatsApp template sent:", e);
@@ -2921,7 +2962,8 @@ export default function App() {
         lead_id: lead.id,
         actor_id: currentUser?.id,
         action_type: 'whatsapp_sent',
-        description: `Shared PDF Brochure: "${brochure.name}"`
+        description: `Shared PDF Brochure: "${brochure.name}"`,
+        tenant_id: currentUser?.tenant_id || 'default'
       }]);
     } catch (e: any) {
       setIsShareLoading(false);
@@ -3022,7 +3064,8 @@ export default function App() {
           lead_id: selectedLead.id,
           direction: 'outgoing',
           message_text: messageText,
-          status: 'sent'
+          status: 'sent',
+          tenant_id: currentUser?.tenant_id || 'default'
         }])
         .select()
         .single();
@@ -3034,7 +3077,8 @@ export default function App() {
         lead_id: selectedLead.id,
         actor_id: currentUser?.id,
         action_type: 'whatsapp_sent',
-        description: `Sent custom WhatsApp reply: "${messageText.substring(0, 30)}..."`
+        description: `Sent custom WhatsApp reply: "${messageText.substring(0, 30)}..."`,
+        tenant_id: currentUser?.tenant_id || 'default'
       }]);
 
       // Remap and update local state
@@ -3058,7 +3102,8 @@ export default function App() {
               lead_id: selectedLead.id,
               direction: 'incoming',
               message_text: replyText,
-              status: 'read'
+              status: 'read',
+              tenant_id: currentUser?.tenant_id || 'default'
             }])
             .select()
             .single();
@@ -4393,7 +4438,8 @@ export default function App() {
               travel_luggage_guidelines: field.travel_luggage_guidelines || false,
               travel_pickup_confirmed: field.travel_pickup_confirmed || false,
               ...field,
-              updated_at: new Date().toISOString()
+              updated_at: new Date().toISOString(),
+              tenant_id: currentUser?.tenant_id || 'default'
             })
             .select()
             .single();
@@ -4454,7 +4500,8 @@ export default function App() {
               travel_insurance_done: false,
               travel_luggage_guidelines: false,
               travel_pickup_confirmed: false,
-              updated_at: new Date().toISOString()
+              updated_at: new Date().toISOString(),
+              tenant_id: currentUser?.tenant_id || 'default'
             })
             .select()
             .single();
@@ -4476,6 +4523,7 @@ export default function App() {
             file_url: uri,
             file_name: fileName,
             status: 'pending',
+            tenant_id: currentUser?.tenant_id || 'default'
           }, { onConflict: 'visa_application_id,document_name' })
           .select()
           .single();
