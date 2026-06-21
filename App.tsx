@@ -532,6 +532,12 @@ export default function App() {
     try {
       setIsLoading(true);
 
+      // Verify active session before querying to prevent RLS returning empty lists and overwriting cache
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) {
+        throw new Error("No active session found");
+      }
+
       // 0. Fetch profiles
       const { data: profilesData, error: profilesError } = await supabase
         .from('profiles')
@@ -741,60 +747,74 @@ export default function App() {
     }
   };
 
-  // Check active session on mount
+  // Check active session on mount and listen to changes
   useEffect(() => {
-    const checkSession = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
+    let active = true;
+
+    const handleSession = async (session: any) => {
+      if (!active) return;
+      if (session?.user) {
+        try {
           const { data: profile } = await supabase
             .from('profiles')
             .select('*')
             .eq('id', session.user.id)
             .single();
 
-          if (profile) {
+          if (profile && active) {
             setCurrentUser(profile as Profile);
             await AsyncStorage.setItem('m_user', JSON.stringify(profile));
-          } else {
-            setCurrentUser(null);
+          }
+        } catch (err) {
+          console.error("Error fetching user profile in auth listener:", err);
+        }
+      } else {
+        // No active session — check if we are online.
+        let isOnline = false;
+        try {
+          const response = await fetch('https://clients3.google.com/generate_204', {
+            method: 'HEAD',
+            cache: 'no-cache',
+          });
+          isOnline = response.status === 204 || response.ok;
+        } catch (_) {
+          isOnline = false;
+        }
+
+        if (isOnline) {
+          if (active) {
             await AsyncStorage.removeItem('m_user');
+            setCurrentUser(null);
           }
         } else {
-          // No active Supabase session — check if we are online.
-          // If online, the session is truly expired/invalid: clear cache and force login.
-          // If offline, restore the cached profile so the app stays usable.
-          let isOnline = false;
-          try {
-            const response = await fetch('https://clients3.google.com/generate_204', {
-              method: 'HEAD',
-              cache: 'no-cache',
-            });
-            isOnline = response.status === 204 || response.ok;
-          } catch (_) {
-            isOnline = false;
-          }
-
-          if (isOnline) {
-            // Online but no session → force login, clear stale cache
-            await AsyncStorage.removeItem('m_user');
-            setCurrentUser(null);
-          } else {
-            // Offline → restore cached user so app is usable without connectivity
-            const cachedUser = await AsyncStorage.getItem('m_user');
-            if (cachedUser) setCurrentUser(JSON.parse(cachedUser));
+          const cachedUser = await AsyncStorage.getItem('m_user');
+          if (cachedUser && active) {
+            setCurrentUser(JSON.parse(cachedUser));
           }
         }
-      } catch (e) {
-        console.error("Session check error: ", e);
-        // On error, fall back to cache so app doesn't brick
-        const cachedUser = await AsyncStorage.getItem('m_user');
-        if (cachedUser) setCurrentUser(JSON.parse(cachedUser));
-      } finally {
+      }
+      if (active) {
         setIsLoading(false);
       }
     };
-    checkSession();
+
+    // First check the current session (might be ready or null)
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        handleSession(session);
+      }
+    });
+
+    // Then, listen to all auth changes (handles async hydration and sign-in/out events)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log("Auth state changed:", event, session?.user?.id);
+      handleSession(session);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   // Load settings on mount
@@ -821,6 +841,8 @@ export default function App() {
 
   const fetchLeadsOnly = async () => {
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
       const { data: leadsData, error: leadsError } = await supabase
         .from('leads')
         .select('*')
@@ -836,6 +858,8 @@ export default function App() {
 
   const fetchTasksOnly = async () => {
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
       const { data: tasksData, error: tasksError } = await supabase
         .from('tasks')
         .select('*')
@@ -851,6 +875,8 @@ export default function App() {
 
   const fetchNotesOnly = async () => {
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
       const { data: notesData, error: notesError } = await supabase
         .from('notes')
         .select('*')
