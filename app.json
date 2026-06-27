@@ -9,12 +9,14 @@
     "ios": {
       "icon": "./assets/ps_crm_app_icon.jpg",
       "bundleIdentifier": "com.perfectscholar.crm",
+      "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "package": "com.perfectscholar.crm",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/ps_crm_app_icon.jpg"
