@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   StyleSheet, Text, View, ScrollView, TextInput, TouchableOpacity, 
   SafeAreaView, StatusBar, ActivityIndicator, Alert, Linking, Share, Image, Platform, Clipboard, BackHandler,
-  KeyboardAvoidingView
+  KeyboardAvoidingView, AppState
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { 
@@ -17,6 +17,7 @@ import * as Sharing from 'expo-sharing';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import * as Updates from 'expo-updates';
 import { CSVImportModalMobile } from './components/CSVImportModalMobile';
 
 const isExpoGo = Constants.appOwnership === 'expo' || Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
@@ -449,6 +450,10 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   
   const [isLoading, setIsLoading] = useState(true);
+
+  // OTA Update State
+  const [otaUpdateAvailable, setOtaUpdateAvailable] = useState(false);
+  const [otaChecking, setOtaChecking] = useState(false);
   
   // Navigation Screens
   const [currentScreen, setCurrentScreen] = useState<'dashboard' | 'detail' | 'tasksList'>('dashboard');
@@ -839,6 +844,33 @@ export default function App() {
     loadSettings();
   }, []);
 
+  // OTA Update Check
+  const checkForOtaUpdate = async () => {
+    // Only works in standalone/production builds, not Expo Go
+    if (isExpoGo || !Updates.isEnabled) return;
+    try {
+      setOtaChecking(true);
+      const update = await Updates.checkForUpdateAsync();
+      if (update.isAvailable) {
+        await Updates.fetchUpdateAsync();
+        setOtaUpdateAvailable(true);
+      }
+    } catch (e) {
+      // Silently fail — don't disturb the user for update errors
+      console.warn('[OTA] Update check failed:', e);
+    } finally {
+      setOtaChecking(false);
+    }
+  };
+
+  useEffect(() => {
+    // Check for OTA update 3 seconds after app loads (non-blocking)
+    const timer = setTimeout(() => {
+      checkForOtaUpdate();
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, []);
+
   const fetchLeadsOnly = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -1027,6 +1059,16 @@ export default function App() {
       };
       checkAndRegisterPush();
     }
+  }, [currentUser]);
+
+  // Refresh data whenever the app comes back to the foreground
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active' && currentUser) {
+        fetchData();
+      }
+    });
+    return () => subscription.remove();
   }, [currentUser]);
 
   // Auth logins helper
@@ -4154,66 +4196,38 @@ export default function App() {
           </TouchableOpacity>
         </View>
       </View>
-
-      {/* Stats Summary Panel */}
-      <View style={styles.statsSummaryRow}>
-        <View style={[styles.statsSummaryCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
-          <Text style={[styles.statsSummaryLabel, { color: theme.textMuted }]}>ASSIGNED LEADS</Text>
-          <Text style={[styles.statsSummaryVal, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>{myLeads.length}</Text>
-        </View>
-        <TouchableOpacity 
-          style={[styles.statsSummaryCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
-          onPress={() => {
-            setPrevScreen('dashboard');
-            setCurrentScreen('tasksList');
+      {/* OTA Update Ready Banner */}
+      {otaUpdateAvailable && (
+        <TouchableOpacity
+          style={{
+            backgroundColor: '#4F46E5',
+            paddingVertical: 10,
+            paddingHorizontal: 16,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+          onPress={async () => {
+            try {
+              await Updates.reloadAsync();
+            } catch (e) {
+              Alert.alert('Update', 'Please close and reopen the app to apply the update.');
+            }
           }}
         >
-          <Text style={[styles.statsSummaryLabel, { color: theme.textMuted }]}>PENDING TASKS</Text>
-          <Text style={[styles.statsSummaryVal, { color: '#EF4444' }]}>
-            {tasks.filter(t => !t.is_completed && myLeads.map(l => l.id).includes(t.lead_id)).length}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={{ fontSize: 13, color: '#FFFFFF' }}>🚀</Text>
+            <Text style={{ fontSize: 13, color: '#FFFFFF', fontWeight: '600' }}>
+              New update available!
+            </Text>
+          </View>
+          <View style={{ backgroundColor: '#FFFFFF', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 }}>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#4F46E5' }}>Restart Now</Text>
+          </View>
         </TouchableOpacity>
-      </View>
+      )}
 
-      {/* Action Header */}
-      <View style={[styles.actionHeaderRow, { gap: 4 }]}>
-        <Text style={[styles.listSectionTitle, { color: theme.text, flex: 1 }]} numberOfLines={1}>
-          My Leads
-        </Text>
-        
-        <TouchableOpacity 
-          style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#1E293B' : '#F8FAFC', paddingHorizontal: 6 }]}
-          onPress={handleExportCSV}
-        >
-          <Text style={{ fontSize: 10, fontWeight: '700', color: theme.textMuted }}>Export</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#1E293B' : '#F8FAFC', paddingHorizontal: 6 }]}
-          onPress={() => setIsImportModalOpen(true)}
-        >
-          <Text style={{ fontSize: 10, fontWeight: '700', color: theme.textMuted }}>Import</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#1E293B' : '#F0FDF4', borderColor: '#86EFAC', borderWidth: 1, paddingHorizontal: 6 }]}
-          onPress={handleSyncPartnerData}
-          disabled={isSyncing}
-        >
-          <Text style={{ fontSize: 10, fontWeight: '700', color: '#16A34A' }}>
-            {isSyncing ? 'Sync...' : 'Sync'}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', paddingHorizontal: 6 }]}
-          onPress={() => setIsAddModalOpen(true)}
-        >
-          <Text style={[styles.addBtnHeaderText, { color: darkMode ? '#818CF8' : '#4F46E5', fontSize: 10 }]}>+ Lead</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Pipeline Scroll view selector */}
+      {/* Pipeline Scroll view selector - FIXED */}
       {pipelines.length > 0 && (
         <View style={[styles.pipelineSelectorContainer, { borderBottomColor: theme.border }]}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 15, paddingVertical: 10, gap: 10, flexDirection: 'row' }}>
@@ -4348,8 +4362,64 @@ export default function App() {
         />
       </View>
 
-      {/* Leads Scroll list */}
+      {/* Leads Scroll list - stats + action header scroll with leads */}
       <ScrollView style={[styles.listScroll, { backgroundColor: theme.bg }]} contentContainerStyle={{ paddingBottom: 20 }}>
+
+        {/* Stats Summary Panel - scrolls with leads */}
+        <View style={[styles.statsSummaryRow, { marginTop: 0 }]}>
+          <View style={[styles.statsSummaryCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+            <Text style={[styles.statsSummaryLabel, { color: theme.textMuted }]}>ASSIGNED LEADS</Text>
+            <Text style={[styles.statsSummaryVal, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>{myLeads.length}</Text>
+          </View>
+          <TouchableOpacity 
+            style={[styles.statsSummaryCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
+            onPress={() => {
+              setPrevScreen('dashboard');
+              setCurrentScreen('tasksList');
+            }}
+          >
+            <Text style={[styles.statsSummaryLabel, { color: theme.textMuted }]}>PENDING TASKS</Text>
+            <Text style={[styles.statsSummaryVal, { color: '#EF4444' }]}>
+              {tasks.filter(t => !t.is_completed && myLeads.map(l => l.id).includes(t.lead_id)).length}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Action Header - scrolls with leads */}
+        <View style={[styles.actionHeaderRow, { gap: 4 }]}>
+          <Text style={[styles.listSectionTitle, { color: theme.text, flex: 1 }]} numberOfLines={1}>
+            My Leads
+          </Text>
+          <TouchableOpacity 
+            style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#1E293B' : '#F8FAFC', paddingHorizontal: 6 }]}
+            onPress={handleExportCSV}
+          >
+            <Text style={{ fontSize: 10, fontWeight: '700', color: theme.textMuted }}>Export</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#1E293B' : '#F8FAFC', paddingHorizontal: 6 }]}
+            onPress={() => setIsImportModalOpen(true)}
+          >
+            <Text style={{ fontSize: 10, fontWeight: '700', color: theme.textMuted }}>Import</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#1E293B' : '#F0FDF4', borderColor: '#86EFAC', borderWidth: 1, paddingHorizontal: 6 }]}
+            onPress={handleSyncPartnerData}
+            disabled={isSyncing}
+          >
+            <Text style={{ fontSize: 10, fontWeight: '700', color: '#16A34A' }}>
+              {isSyncing ? 'Sync...' : 'Sync'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', paddingHorizontal: 6 }]}
+            onPress={() => setIsAddModalOpen(true)}
+          >
+            <Text style={[styles.addBtnHeaderText, { color: darkMode ? '#818CF8' : '#4F46E5', fontSize: 10 }]}>+ Lead</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Lead cards */}
         {filteredLeads.length > 0 ? (
           filteredLeads.map(lead => (
             <View key={lead.id} style={[styles.leadItemCard, { backgroundColor: theme.leadCardBg, borderColor: theme.border }]}>
@@ -4414,6 +4484,7 @@ export default function App() {
           <Text style={[styles.noLeadsText, { color: theme.textMuted }]}>No leads assigned to this profile matching query</Text>
         )}
       </ScrollView>
+
       {renderFeedbackModal()}
       {renderSettingsModal()}
       {renderWhatsAppModal()}

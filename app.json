@@ -2,26 +2,51 @@
   "expo": {
     "name": "PS-CRM",
     "slug": "crm",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
-    "icon": "./assets/ps_crm_app_icon.jpg",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/13d4d5f3-78e7-444f-9e40-fcfdc281b17e",
+      "enabled": true,
+      "fallbackToCacheTimeout": 0,
+      "checkAutomatically": "ON_LOAD"
+    },
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
     "ios": {
-      "icon": "./assets/ps_crm_app_icon.jpg",
+      "icon": "./assets/icon.png",
       "bundleIdentifier": "com.perfectscholar.crm",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "PS-CRM needs access to your camera to capture lead documents.",
+        "NSPhotoLibraryUsageDescription": "PS-CRM needs access to your gallery to upload lead documents."
       }
     },
     "android": {
       "package": "com.perfectscholar.crm",
       "googleServicesFile": "./google-services.json",
+      "icon": "./assets/icon.png",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/ps_crm_app_icon.jpg"
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "INTERNET",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -37,10 +62,22 @@
         "expo-build-properties",
         {
           "android": {
-            "usesCleartextTraffic": true
+            "usesCleartextTraffic": true,
+            "targetSdkVersion": 36,
+            "compileSdkVersion": 36,
+            "buildToolsVersion": "36.0.0"
           }
         }
-      ]
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "PS-CRM needs access to your gallery to upload lead documents.",
+          "cameraPermission": "PS-CRM needs access to your camera to capture lead documents.",
+          "microphonePermission": false
+        }
+      ],
+      "expo-updates"
     ]
   }
 }

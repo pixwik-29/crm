@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "386892303772",
+    "project_id": "perfect-scholar-dbad5",
+    "storage_bucket": "perfect-scholar-dbad5.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:386892303772:android:ddc7564093a31afcb18c59",
+        "android_client_info": {
+          "package_name": "com.perfectscholar.crm"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAK6LPom-5Kojr8x-cRlfbFWpU_CyHoCPc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:386892303772:android:4d061ff4607b58feb18c59",
+        "android_client_info": {
+          "package_name": "com.perfectscholar.partners"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAK6LPom-5Kojr8x-cRlfbFWpU_CyHoCPc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
