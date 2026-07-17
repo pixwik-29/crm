@@ -1103,6 +1103,45 @@ export default function App() {
     }
   }, [currentUser]);
 
+  // Handle notification tap → navigate to the correct screen
+  useEffect(() => {
+    if (!Notifications || !currentUser) return;
+
+    const subscription = Notifications.addNotificationResponseReceivedListener((response: any) => {
+      const data = response?.notification?.request?.content?.data || {};
+      const { leadId } = data;
+
+      if (!leadId) return;
+
+      // Find the lead in current state
+      const matchedLead = leads.find(l => l.id === leadId);
+
+      // Determine notification type from the title
+      const title: string = response?.notification?.request?.content?.title || '';
+      const isInboxMessage = title.startsWith('💬');
+
+      if (isInboxMessage) {
+        // Navigate to Chats tab
+        setCurrentScreen('dashboard');
+        setDashboardTab('inbox');
+        if (matchedLead) {
+          setSelectedInboxLeadId(matchedLead.id);
+        }
+      } else if (matchedLead) {
+        // Navigate to Lead Detail screen
+        setPrevScreen('dashboard');
+        setSelectedLead(matchedLead);
+        setCurrentScreen('detail');
+      } else {
+        // Lead not yet in state — switch to leads tab and it will appear on next sync
+        setCurrentScreen('dashboard');
+        setDashboardTab('leads');
+      }
+    });
+
+    return () => subscription.remove();
+  }, [currentUser, leads]);
+
   // Refresh data whenever the app comes back to the foreground
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
