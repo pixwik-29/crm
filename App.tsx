@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { 
-  Phone, MessageSquare, Mail, Tag, ArrowLeft, Award, User, Clock, Search, 
+  Phone, MessageSquare, Mail, Tag, ArrowLeft, Award, User, Clock, Search, Users,
   Plus, Check, LogOut, ArrowRight, Eye, Shield, Bell, PlusCircle, CheckCircle, Smartphone, Settings,
   FileText, Upload, Camera, Plane, CheckSquare, Square
 } from 'lucide-react-native';
@@ -99,6 +99,7 @@ export interface Profile {
   role: 'admin' | 'manager' | 'counsellor';
   phone?: string;
   tenant_id?: string;
+  has_shared_inbox_access?: boolean;
 }
 
 export interface Lead {
@@ -457,6 +458,10 @@ export default function App() {
   
   // Navigation Screens
   const [currentScreen, setCurrentScreen] = useState<'dashboard' | 'detail' | 'tasksList'>('dashboard');
+  const [dashboardTab, setDashboardTab] = useState<'leads' | 'inbox' | 'tasks'>('leads');
+  const [selectedInboxLeadId, setSelectedInboxLeadId] = useState<string | null>(null);
+  const [inboxMessageInput, setInboxMessageInput] = useState('');
+  const [lastSeenMap, setLastSeenMap] = useState<Record<string, string>>({});
   const [prevScreen, setPrevScreen] = useState<'dashboard' | 'tasksList'>('dashboard');
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   
@@ -507,7 +512,7 @@ export default function App() {
   const [noteText, setNoteText] = useState('');
   const [taskText, setTaskText] = useState('');
   const [chatInput, setChatInput] = useState('');
-  const [chatHistory, setChatHistory] = useState<{ id: string; lead_id: string; direction: 'in' | 'out'; text: string; time: string }[]>([]);
+  const [chatHistory, setChatHistory] = useState<{ id: string; lead_id: string; direction: 'in' | 'out'; text: string; time: string; rawTime?: string }[]>([]);
 
   // Search State
   const [searchTerm, setSearchTerm] = useState('');
@@ -600,7 +605,8 @@ export default function App() {
         lead_id: c.lead_id,
         direction: c.direction === 'incoming' ? ('in' as const) : ('out' as const),
         text: c.message_text,
-        time: new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        time: new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        rawTime: c.created_at
       }));
       setChatHistory(remappedChat);
       await AsyncStorage.setItem('m_chat', JSON.stringify(remappedChat));
@@ -742,6 +748,11 @@ export default function App() {
       } else {
         setColleges(defaultColleges);
         await AsyncStorage.setItem('m_colleges', JSON.stringify(defaultColleges));
+      }
+
+      const cachedLastSeen = await AsyncStorage.getItem('m_last_seen_map');
+      if (cachedLastSeen) {
+        setLastSeenMap(JSON.parse(cachedLastSeen));
       }
 
       setPartners(cachedPartners ? JSON.parse(cachedPartners) : []);
@@ -922,6 +933,31 @@ export default function App() {
     }
   };
 
+  const fetchChatHistoryOnly = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
+      const { data: chatData, error: chatError } = await supabase
+        .from('whatsapp_history')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!chatError && chatData) {
+        const remappedChat = chatData.map(c => ({
+          id: c.id,
+          lead_id: c.lead_id,
+          direction: c.direction === 'incoming' ? ('in' as const) : ('out' as const),
+          text: c.message_text,
+          time: new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          rawTime: c.created_at
+        }));
+        setChatHistory(remappedChat);
+        await AsyncStorage.setItem('m_chat', JSON.stringify(remappedChat));
+      }
+    } catch (e) {
+      console.error("Error auto-refreshing chats:", e);
+    }
+  };
+
   // Real-Time Subscriptions and Background Polling (Auto-Lead Refresh)
   useEffect(() => {
     if (!currentUser) return;
@@ -938,6 +974,9 @@ export default function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, () => {
         fetchNotesOnly();
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_history' }, () => {
+        fetchChatHistoryOnly();
+      })
       .subscribe();
 
     // 2. 30-Second Polling Fallback (ensures freshness even on network fluctuations)
@@ -945,6 +984,7 @@ export default function App() {
       fetchLeadsOnly();
       fetchTasksOnly();
       fetchNotesOnly();
+      fetchChatHistoryOnly();
     }, 30000);
 
     return () => {
@@ -3155,7 +3195,8 @@ export default function App() {
         lead_id: newMsg.lead_id,
         direction: 'out' as const,
         text: newMsg.message_text,
-        time: new Date(newMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        time: new Date(newMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        rawTime: newMsg.created_at
       };
       setChatHistory(prev => [...prev, remappedNewMsg]);
 
@@ -3182,7 +3223,8 @@ export default function App() {
               lead_id: botMsg.lead_id,
               direction: 'in' as const,
               text: botMsg.message_text,
-              time: new Date(botMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              time: new Date(botMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              rawTime: botMsg.created_at
             };
             setChatHistory(prev => [...prev, remappedIncoming]);
             Alert.alert(`📱 New reply from ${selectedLead.name}`, "Check the WhatsApp chat log in details tab.");
@@ -4173,6 +4215,463 @@ export default function App() {
     );
   }
 
+  const handleSendSharedInboxMsg = async (lead: Lead, textToSend: string) => {
+    if (!textToSend.trim()) return;
+    try {
+      const { data: newMsg, error } = await supabase
+        .from('whatsapp_history')
+        .insert([{
+          lead_id: lead.id,
+          direction: 'outgoing',
+          message_text: textToSend,
+          status: 'sent',
+          tenant_id: currentUser?.tenant_id || 'default'
+        }])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Add activity log
+      await supabase.from('activity_logs').insert([{
+        lead_id: lead.id,
+        actor_id: currentUser?.id,
+        action_type: 'whatsapp_sent',
+        description: `Sent WhatsApp reply from Shared Inbox: "${textToSend.substring(0, 30)}..."`,
+        tenant_id: currentUser?.tenant_id || 'default'
+      }]);
+
+      // Remap and update local state
+      const remappedNewMsg = {
+        id: newMsg.id,
+        lead_id: newMsg.lead_id,
+        direction: 'out' as const,
+        text: newMsg.message_text,
+        time: new Date(newMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        rawTime: newMsg.created_at
+      };
+      setChatHistory(prev => [...prev, remappedNewMsg]);
+      
+      // Simulate reply after 2.5 seconds (same as detail view chat)
+      setTimeout(async () => {
+        try {
+          const replyText = "Got your message. I am currently out with my parents, but I will check the college brochures by tonight. Thank you!";
+          
+          const { data: botMsg } = await supabase
+            .from('whatsapp_history')
+            .insert([{
+              lead_id: lead.id,
+              direction: 'incoming',
+              message_text: replyText,
+              status: 'read',
+              tenant_id: currentUser?.tenant_id || 'default'
+            }])
+            .select()
+            .single();
+
+          if (botMsg) {
+            const remappedIncoming = {
+              id: botMsg.id,
+              lead_id: botMsg.lead_id,
+              direction: 'in' as const,
+              text: botMsg.message_text,
+              time: new Date(botMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              rawTime: botMsg.created_at
+            };
+            setChatHistory(prev => [...prev, remappedIncoming]);
+          }
+        } catch (e) {
+          console.error("Simulation error: ", e);
+        }
+      }, 2500);
+      
+    } catch (e) {
+      console.error(e);
+      Alert.alert("Error", "Failed to send message");
+    }
+  };
+
+  function renderSharedInboxView() {
+    // 1. Thread List View (when selectedInboxLeadId is null)
+    if (!selectedInboxLeadId) {
+      // Group chat messages by lead_id
+      const threadMapLocal: Record<string, {
+        leadId: string;
+        leadName: string;
+        phone: string;
+        lastMessageText: string;
+        lastMessageTime: string;
+        lastMessageRawTime: string;
+        unreadCount: number;
+      }> = {};
+
+      // Calculate threads
+      chatHistory.forEach(msg => {
+        const leadId = msg.lead_id;
+        if (!leadId) return;
+
+        const lead = leads.find(l => l.id === leadId);
+        const leadName = lead ? lead.name : 'Unknown Candidate';
+        const phone = lead ? (lead.whatsapp_number || lead.phone) : 'N/A';
+
+        // Check if message is unread
+        const lastSeen = lastSeenMap[leadId] || '1970-01-01T00:00:00.000Z';
+        const isIncoming = msg.direction === 'in';
+        const isUnread = isIncoming && msg.rawTime && new Date(msg.rawTime).getTime() > new Date(lastSeen).getTime();
+
+        if (!threadMapLocal[leadId]) {
+          threadMapLocal[leadId] = {
+            leadId,
+            leadName,
+            phone,
+            lastMessageText: msg.text || '',
+            lastMessageTime: msg.time || '',
+            lastMessageRawTime: msg.rawTime || '',
+            unreadCount: isUnread ? 1 : 0
+          };
+        } else {
+          // If this message is newer than what we recorded, update last message info
+          const currentRecordedTime = new Date(threadMapLocal[leadId].lastMessageRawTime).getTime();
+          const msgTime = msg.rawTime ? new Date(msg.rawTime).getTime() : 0;
+          if (msgTime > currentRecordedTime) {
+            threadMapLocal[leadId].lastMessageText = msg.text || '';
+            threadMapLocal[leadId].lastMessageTime = msg.time || '';
+            threadMapLocal[leadId].lastMessageRawTime = msg.rawTime || '';
+          }
+          if (isUnread) {
+            threadMapLocal[leadId].unreadCount += 1;
+          }
+        }
+      });
+
+      // Convert to array and sort by last message timestamp descending
+      const threadsList = Object.values(threadMapLocal).sort((a, b) => {
+        const aTime = a.lastMessageRawTime ? new Date(a.lastMessageRawTime).getTime() : 0;
+        const bTime = b.lastMessageRawTime ? new Date(b.lastMessageRawTime).getTime() : 0;
+        return bTime - aTime;
+      });
+
+      return (
+        <View style={{ flex: 1, backgroundColor: theme.bg }}>
+          {/* Subheader */}
+          <View style={{ paddingHorizontal: 20, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: theme.border, backgroundColor: theme.cardBg }}>
+            <Text style={{ fontSize: 16, fontWeight: '800', color: theme.text }}>Active Conversations</Text>
+            <Text style={{ fontSize: 11, color: theme.textMuted, marginTop: 2 }}>Real-time candidate messaging dashboard</Text>
+          </View>
+
+          {/* List of active threads */}
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }}>
+            {threadsList.length > 0 ? (
+              threadsList.map(thread => {
+                const initials = thread.leadName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || '?';
+                return (
+                  <TouchableOpacity
+                    key={thread.leadId}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      paddingHorizontal: 20,
+                      paddingVertical: 15,
+                      borderBottomWidth: 1,
+                      borderBottomColor: theme.border,
+                      backgroundColor: thread.unreadCount > 0 ? (darkMode ? '#1E293B' : '#EEF2FF') : 'transparent'
+                    }}
+                    onPress={async () => {
+                      setSelectedInboxLeadId(thread.leadId);
+                      // Mark thread as read
+                      const now = new Date().toISOString();
+                      const updatedMap = { ...lastSeenMap, [thread.leadId]: now };
+                      setLastSeenMap(updatedMap);
+                      await AsyncStorage.setItem('m_last_seen_map', JSON.stringify(updatedMap));
+                    }}
+                  >
+                    {/* Initials Avatar */}
+                    <View style={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: 24,
+                      backgroundColor: thread.unreadCount > 0 ? '#4F46E5' : (darkMode ? '#334155' : '#E2E8F0'),
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      marginRight: 15
+                    }}>
+                      <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '800' }}>
+                        {initials}
+                      </Text>
+                    </View>
+
+                    {/* Middle: Details */}
+                    <View style={{ flex: 1, marginRight: 10 }}>
+                      <Text style={{ fontSize: 14, fontWeight: thread.unreadCount > 0 ? '900' : '700', color: theme.text }}>
+                        {thread.leadName}
+                      </Text>
+                      <Text 
+                        numberOfLines={1} 
+                        style={{ 
+                          fontSize: 12, 
+                          color: thread.unreadCount > 0 ? (darkMode ? '#E2E8F0' : '#1E293B') : theme.textMuted, 
+                          fontWeight: thread.unreadCount > 0 ? '700' : '500',
+                          marginTop: 4 
+                        }}
+                      >
+                        {thread.lastMessageText}
+                      </Text>
+                    </View>
+
+                    {/* Right: Time & Badge */}
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={{ fontSize: 10, color: theme.textMuted }}>
+                        {thread.lastMessageTime}
+                      </Text>
+                      {thread.unreadCount > 0 && (
+                        <View style={{
+                          backgroundColor: '#10B981',
+                          borderRadius: 10,
+                          minWidth: 18,
+                          height: 18,
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                          marginTop: 6,
+                          paddingHorizontal: 4
+                        }}>
+                          <Text style={{ color: '#FFF', fontSize: 9, fontWeight: '900' }}>{thread.unreadCount}</Text>
+                        </View>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
+            ) : (
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 100, paddingHorizontal: 40 }}>
+                <MessageSquare size={48} color={theme.textMuted} style={{ marginBottom: 15, opacity: 0.5 }} />
+                <Text style={{ fontSize: 14, fontWeight: '700', color: theme.text, textAlign: 'center' }}>No Active Threads</Text>
+                <Text style={{ fontSize: 12, color: theme.textMuted, textAlign: 'center', marginTop: 6 }}>
+                  Start a WhatsApp simulator chat from a candidate's profile to view conversations here.
+                </Text>
+              </View>
+            )}
+          </ScrollView>
+        </View>
+      );
+    }
+
+    // 2. Active Conversation View
+    const activeLead = leads.find(l => l.id === selectedInboxLeadId);
+    const activeLeadName = activeLead ? activeLead.name : 'Unknown Candidate';
+    const activeLeadPhone = activeLead ? (activeLead.whatsapp_number || activeLead.phone) : 'N/A';
+    
+    const messages = chatHistory
+      .filter(m => m.lead_id === selectedInboxLeadId)
+      // Display chronological order (oldest first)
+      .sort((a, b) => {
+        const aTime = a.rawTime ? new Date(a.rawTime).getTime() : 0;
+        const bTime = b.rawTime ? new Date(b.rawTime).getTime() : 0;
+        return aTime - bTime;
+      });
+
+    return (
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
+        style={{ flex: 1, backgroundColor: theme.bg }}
+      >
+        {/* Conversation Header */}
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          paddingHorizontal: 15,
+          paddingVertical: 12,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.border,
+          backgroundColor: theme.cardBg
+        }}>
+          {/* Back btn */}
+          <TouchableOpacity 
+            onPress={() => setSelectedInboxLeadId(null)}
+            style={{ padding: 8, marginRight: 8 }}
+          >
+            <ArrowLeft size={20} color={theme.text} />
+          </TouchableOpacity>
+
+          {/* Info click to open candidate profile */}
+          <TouchableOpacity 
+            onPress={() => {
+              if (activeLead) {
+                setSelectedLead(activeLead);
+                setCurrentScreen('detail');
+                setPrevScreen('dashboard');
+              }
+            }}
+            style={{ flex: 1 }}
+          >
+            <Text style={{ fontSize: 15, fontWeight: '800', color: theme.text }}>{activeLeadName}</Text>
+            <Text style={{ fontSize: 11, color: theme.textMuted, marginTop: 2 }}>{activeLeadPhone} • Tap to view profile</Text>
+          </TouchableOpacity>
+
+          {/* Call Shortcut */}
+          {activeLead && (
+            <TouchableOpacity 
+              onPress={() => triggerCall(activeLead)}
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: 19,
+                backgroundColor: darkMode ? '#334155' : '#F1F5F9',
+                justifyContent: 'center',
+                alignItems: 'center'
+              }}
+            >
+              <Phone size={16} color="#6366F1" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Messaging Area */}
+        <ScrollView 
+          style={{ flex: 1, paddingHorizontal: 15 }} 
+          contentContainerStyle={{ paddingVertical: 20 }}
+          ref={ref => {
+            // Auto scroll to bottom
+            setTimeout(() => ref?.scrollToEnd({ animated: true }), 100);
+          }}
+        >
+          {messages.map(msg => {
+            const isOutgoing = msg.direction === 'out';
+            return (
+              <View 
+                key={msg.id}
+                style={{
+                  alignSelf: isOutgoing ? 'flex-end' : 'flex-start',
+                  backgroundColor: isOutgoing ? '#4F46E5' : (darkMode ? '#1E293B' : '#E2E8F0'),
+                  paddingHorizontal: 14,
+                  paddingVertical: 10,
+                  borderRadius: 16,
+                  borderBottomRightRadius: isOutgoing ? 4 : 16,
+                  borderBottomLeftRadius: isOutgoing ? 16 : 4,
+                  maxWidth: '75%',
+                  marginBottom: 10,
+                  shadowColor: '#000',
+                  shadowOpacity: 0.02,
+                  shadowRadius: 3,
+                  shadowOffset: { width: 0, height: 1 }
+                }}
+              >
+                <Text style={{ color: isOutgoing ? '#FFF' : theme.text, fontSize: 13, lineHeight: 18 }}>
+                  {msg.text}
+                </Text>
+                <Text style={{
+                  color: isOutgoing ? 'rgba(255,255,255,0.7)' : theme.textMuted,
+                  fontSize: 9,
+                  alignSelf: 'flex-end',
+                  marginTop: 4,
+                  fontWeight: '600'
+                }}>
+                  {msg.time}
+                </Text>
+              </View>
+            );
+          })}
+        </ScrollView>
+
+        {/* Quick Templates Panel */}
+        {whatsappTemplates.length > 0 && (
+          <View style={{ borderTopWidth: 1, borderTopColor: theme.border, backgroundColor: theme.cardBg, paddingVertical: 8 }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 15, gap: 8, flexDirection: 'row' }}>
+              {whatsappTemplates.map(temp => (
+                <TouchableOpacity
+                  key={temp.id}
+                  style={{
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 20,
+                    backgroundColor: darkMode ? '#334155' : '#F1F5F9',
+                    borderWidth: 1,
+                    borderColor: theme.border
+                  }}
+                  onPress={() => {
+                    Alert.alert(
+                      "Send Template",
+                      `Are you sure you want to send the "${temp.name}" template message to ${activeLeadName}?`,
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        { 
+                          text: "Send", 
+                          onPress: () => {
+                            let parsedBody = temp.body
+                              .replace('{{lead_name}}', activeLeadName)
+                              .replace('{{neet_marks}}', String(activeLead?.neet_marks || 200))
+                              .replace('{{budget}}', activeLead?.budget ? `${(activeLead.budget / 100000).toFixed(1)} Lakh` : '40 Lakh')
+                              .replace('{{preferred_destination}}', activeLead?.preferred_destination || 'Georgia/Russia');
+                            if (temp.attachment_url) {
+                              parsedBody += `\n\n📄 Document: ${temp.attachment_url}`;
+                            }
+                            handleSendSharedInboxMsg(activeLead!, parsedBody);
+                          } 
+                        }
+                      ]
+                    );
+                  }}
+                >
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#4F46E5' }}>📝 {temp.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
+        {/* Input Bar */}
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          paddingHorizontal: 15,
+          paddingVertical: 10,
+          borderTopWidth: 1,
+          borderTopColor: theme.border,
+          backgroundColor: theme.cardBg,
+          paddingBottom: Platform.OS === 'ios' ? 25 : 10
+        }}>
+          <TextInput 
+            style={{
+              flex: 1,
+              backgroundColor: darkMode ? '#0F172A' : '#F8FAFC',
+              color: theme.text,
+              borderRadius: 20,
+              paddingHorizontal: 16,
+              paddingVertical: 8,
+              fontSize: 13,
+              marginRight: 10,
+              maxHeight: 100,
+              borderWidth: 1,
+              borderColor: theme.border
+            }}
+            placeholder="Type your WhatsApp reply..."
+            placeholderTextColor={theme.textMuted}
+            value={inboxMessageInput}
+            onChangeText={setInboxMessageInput}
+            multiline
+          />
+          <TouchableOpacity 
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 18,
+              backgroundColor: '#4F46E5',
+              justifyContent: 'center',
+              alignItems: 'center'
+            }}
+            onPress={() => {
+              if (activeLead && inboxMessageInput.trim()) {
+                handleSendSharedInboxMsg(activeLead, inboxMessageInput);
+                setInboxMessageInput('');
+              }
+            }}
+          >
+            <ArrowRight size={16} color="#FFF" />
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    );
+  }
+
   // --- DASHBOARD VIEW ---
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
@@ -4227,6 +4726,8 @@ export default function App() {
         </TouchableOpacity>
       )}
 
+      {dashboardTab === 'leads' && (
+      <>
       {/* Pipeline Scroll view selector - FIXED */}
       {pipelines.length > 0 && (
         <View style={[styles.pipelineSelectorContainer, { borderBottomColor: theme.border }]}>
@@ -4484,6 +4985,201 @@ export default function App() {
           <Text style={[styles.noLeadsText, { color: theme.textMuted }]}>No leads assigned to this profile matching query</Text>
         )}
       </ScrollView>
+      </>
+      )}
+
+      {/* Shared Inbox view */}
+      {dashboardTab === 'inbox' && renderSharedInboxView()}
+
+      {/* Pending Tasks view */}
+      {dashboardTab === 'tasks' && (() => {
+        const myLeadIds = myLeads.map(l => l.id);
+        const pendingTasks = tasks
+          .filter(t => !t.is_completed && myLeadIds.includes(t.lead_id))
+          .sort((a, b) => new Date(a.due_date || 0).getTime() - new Date(b.due_date || 0).getTime());
+
+        return (
+          <View style={{ flex: 1 }}>
+            {/* Subheader */}
+            <View style={{ paddingHorizontal: 20, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: theme.border, backgroundColor: theme.cardBg }}>
+              <Text style={{ fontSize: 16, fontWeight: '800', color: theme.text }}>Pending Tasks</Text>
+              <Text style={{ fontSize: 11, color: theme.textMuted, marginTop: 2 }}>Tasks assigned to your lead pipeline</Text>
+            </View>
+
+            <ScrollView style={{ flex: 1, paddingHorizontal: 20, paddingTop: 15 }} contentContainerStyle={{ paddingBottom: 30 }}>
+              {pendingTasks.length > 0 ? (
+                pendingTasks.map(task => {
+                  const lead = leads.find(l => l.id === task.lead_id);
+                  const formattedDate = task.due_date ? new Date(task.due_date).toLocaleDateString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric'
+                  }) : 'N/A';
+                  const formattedTime = task.due_date ? new Date(task.due_date).toLocaleTimeString('en-US', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  }) : 'N/A';
+
+                  return (
+                    <View 
+                      key={task.id} 
+                      style={[
+                        styles.leadItemCard, 
+                        { 
+                          backgroundColor: theme.leadCardBg, 
+                          borderColor: theme.border,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: 14,
+                          marginBottom: 10
+                        }
+                      ]}
+                    >
+                      <View style={{ flex: 1, paddingRight: 10 }}>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: theme.text }}>
+                          {task.title}
+                        </Text>
+                        
+                        {lead && (
+                          <TouchableOpacity 
+                            style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 4 }}
+                            onPress={() => {
+                              setPrevScreen('dashboard');
+                              setSelectedLead(lead);
+                              setCurrentScreen('detail');
+                            }}
+                          >
+                            <User size={12} color={darkMode ? '#818CF8' : '#4F46E5'} />
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: darkMode ? '#818CF8' : '#4F46E5', textDecorationLine: 'underline' }}>
+                              Lead: {lead.name}
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 4 }}>
+                          <Clock size={12} color={theme.textMuted} />
+                          <Text style={{ fontSize: 11, color: theme.textMuted }}>
+                            Due: {formattedDate} at {formattedTime}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Complete Task checkbox button */}
+                      <TouchableOpacity 
+                        style={{ 
+                          width: 28, 
+                          height: 28, 
+                          borderRadius: 14, 
+                          borderWidth: 2, 
+                          borderColor: '#10B981', 
+                          justifyContent: 'center', 
+                          alignItems: 'center',
+                          backgroundColor: 'transparent'
+                        }}
+                        onPress={() => handleToggleTask(task.id)}
+                      >
+                        <Check size={14} color="#10B981" />
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })
+              ) : (
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 100, paddingHorizontal: 40 }}>
+                  <CheckCircle size={48} color="#10B981" style={{ marginBottom: 15, opacity: 0.8 }} />
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: theme.text, textAlign: 'center' }}>All Caught Up!</Text>
+                  <Text style={{ fontSize: 12, color: theme.textMuted, textAlign: 'center', marginTop: 6 }}>
+                    No pending tasks for your assigned leads.
+                  </Text>
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        );
+      })()}
+
+      {/* Bottom Tab Navigation Bar */}
+      {(() => {
+        const hasInboxAccess = currentUser?.has_shared_inbox_access || currentUser?.role === 'admin';
+        
+        // Calculate total unread count for badge
+        let totalUnreadCount = 0;
+        chatHistory.forEach(msg => {
+          if (!msg.lead_id || msg.direction !== 'in') return;
+          const lastSeen = lastSeenMap[msg.lead_id] || '1970-01-01T00:00:00.000Z';
+          if (msg.rawTime && new Date(msg.rawTime).getTime() > new Date(lastSeen).getTime()) {
+            totalUnreadCount += 1;
+          }
+        });
+
+        return (
+          <View style={{
+            flexDirection: 'row',
+            height: 60,
+            backgroundColor: theme.cardBg,
+            borderTopWidth: 1,
+            borderTopColor: theme.border,
+            paddingBottom: Platform.OS === 'ios' ? 15 : 5,
+            paddingTop: 5,
+            justifyContent: 'space-around',
+            alignItems: 'center'
+          }}>
+            <TouchableOpacity 
+              style={{ alignItems: 'center', flex: 1 }}
+              onPress={() => {
+                setDashboardTab('leads');
+                setSelectedInboxLeadId(null);
+              }}
+            >
+              <Users size={20} color={dashboardTab === 'leads' ? '#4F46E5' : theme.textMuted} />
+              <Text style={{ fontSize: 10, fontWeight: '700', marginTop: 4, color: dashboardTab === 'leads' ? '#4F46E5' : theme.textMuted }}>Leads</Text>
+            </TouchableOpacity>
+
+            {hasInboxAccess && (
+              <TouchableOpacity 
+                style={{ alignItems: 'center', flex: 1, position: 'relative' }}
+                onPress={() => {
+                  setDashboardTab('inbox');
+                }}
+              >
+                <View>
+                  <MessageSquare size={20} color={dashboardTab === 'inbox' ? '#4F46E5' : theme.textMuted} />
+                  {totalUnreadCount > 0 && (
+                    <View style={{
+                      position: 'absolute',
+                      right: -8,
+                      top: -8,
+                      backgroundColor: '#EF4444',
+                      borderRadius: 8,
+                      minWidth: 16,
+                      height: 16,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      paddingHorizontal: 3
+                    }}>
+                      <Text style={{ color: '#FFF', fontSize: 9, fontWeight: '900' }}>
+                        {totalUnreadCount > 9 ? '9+' : totalUnreadCount}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={{ fontSize: 10, fontWeight: '700', marginTop: 4, color: dashboardTab === 'inbox' ? '#4F46E5' : theme.textMuted }}>Chats</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity 
+              style={{ alignItems: 'center', flex: 1 }}
+              onPress={() => {
+                setDashboardTab('tasks');
+                setSelectedInboxLeadId(null);
+              }}
+            >
+              <CheckSquare size={20} color={dashboardTab === 'tasks' ? '#4F46E5' : theme.textMuted} />
+              <Text style={{ fontSize: 10, fontWeight: '700', marginTop: 4, color: dashboardTab === 'tasks' ? '#4F46E5' : theme.textMuted }}>Tasks</Text>
+            </TouchableOpacity>
+          </View>
+        );
+      })()}
 
       {renderFeedbackModal()}
       {renderSettingsModal()}
