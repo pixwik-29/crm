@@ -818,9 +818,7 @@ export default function App() {
 
     // First check the current session (might be ready or null)
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        handleSession(session);
-      }
+      handleSession(session);
     });
 
     // Then, listen to all auth changes (handles async hydration and sign-in/out events)
