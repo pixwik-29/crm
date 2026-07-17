@@ -949,6 +949,32 @@ export default function App() {
     };
   }, [currentUser]);
 
+  // Automatically mark chats as read when viewed either in Shared Inbox or Lead Details Chat tab
+  useEffect(() => {
+    let targetLeadId: string | null = null;
+    
+    if (dashboardTab === 'inbox' && selectedInboxLeadId) {
+      targetLeadId = selectedInboxLeadId;
+    } else if (currentScreen === 'detail' && selectedLead && detailTab === 'chat') {
+      targetLeadId = selectedLead.id;
+    }
+
+    if (targetLeadId) {
+      const now = new Date().toISOString();
+      const lastSeen = lastSeenMap[targetLeadId];
+      const leadMsgs = chatHistory.filter(m => m.lead_id === targetLeadId && m.direction === 'in');
+      const latestMsgTime = leadMsgs.length > 0 
+        ? Math.max(...leadMsgs.map(m => m.rawTime ? new Date(m.rawTime).getTime() : 0)) 
+        : 0;
+
+      if (!lastSeen || new Date(lastSeen).getTime() < latestMsgTime) {
+        const updatedMap = { ...lastSeenMap, [targetLeadId]: now };
+        setLastSeenMap(updatedMap);
+        AsyncStorage.setItem('m_last_seen_map', JSON.stringify(updatedMap)).catch(err => console.error(err));
+      }
+    }
+  }, [selectedInboxLeadId, selectedLead, currentScreen, detailTab, dashboardTab, chatHistory]);
+
   // Handle Android hardware back button to navigate pages or close modals instead of exiting app
   useEffect(() => {
     const backAction = () => {
