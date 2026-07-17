@@ -13,7 +13,10 @@
       "fallbackToCacheTimeout": 0,
       "checkAutomatically": "ON_LOAD"
     },
-    "icon": "./assets/icon.png",
+    "icon": "./assets/ps_crm_app_icon.png",
+    "notification": {
+      "icon": "./assets/ps_crm_notification_icon.png"
+    },
     "userInterfaceStyle": "light",
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -21,7 +24,7 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "icon": "./assets/icon.png",
+      "icon": "./assets/ps_crm_app_icon.png",
       "bundleIdentifier": "com.perfectscholar.crm",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
@@ -34,7 +37,7 @@
       "package": "com.perfectscholar.crm",
       "googleServicesFile": "./google-services.json",
       "versionCode": 13,
-      "icon": "./assets/icon.png",
+      "icon": "./assets/ps_crm_app_icon.png",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
