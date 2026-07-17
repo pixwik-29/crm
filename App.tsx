@@ -2976,7 +2976,7 @@ export default function App() {
   };
 
   const triggerWhatsApp = (lead: Lead) => {
-    setActiveWhatsAppLead(lead);
+    sendDirectWhatsAppText(lead);
   };
 
   const sendDirectWhatsAppText = async (lead: Lead) => {
@@ -3701,11 +3701,18 @@ export default function App() {
             </TouchableOpacity>
 
             <TouchableOpacity 
-              style={[styles.actionButton, { backgroundColor: '#10B981' }]}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 22,
+                backgroundColor: '#25D366',
+                justifyContent: 'center',
+                alignItems: 'center',
+                alignSelf: 'center'
+              }}
               onPress={() => triggerWhatsApp(selectedLead)}
             >
               <MessageSquare size={18} color="#FFF" />
-              <Text style={styles.actionButtonText}>WhatsApp</Text>
             </TouchableOpacity>
           </View>
 
@@ -4971,6 +4978,14 @@ export default function App() {
                   onPress={() => triggerCall(lead)}
                 >
                   <Phone size={16} color="#6366F1" />
+                </TouchableOpacity>
+
+                {/* WhatsApp Shortcut Button */}
+                <TouchableOpacity 
+                  style={[styles.leadCallBtnCircle, { backgroundColor: darkMode ? '#064E3B' : '#E8FDF0', borderColor: darkMode ? '#047857' : '#A7F3D0', marginLeft: 8 }]}
+                  onPress={() => triggerWhatsApp(lead)}
+                >
+                  <MessageSquare size={16} color={darkMode ? '#34D399' : '#10B981'} />
                 </TouchableOpacity>
               </View>
               
