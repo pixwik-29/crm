@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   StyleSheet, Text, View, ScrollView, TextInput, TouchableOpacity, 
   SafeAreaView, StatusBar, ActivityIndicator, Alert, Linking, Share, Image, Platform, Clipboard, BackHandler,
-  KeyboardAvoidingView, AppState
+  KeyboardAvoidingView, AppState, LayoutAnimation, UIManager
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { 
@@ -22,6 +22,10 @@ import { CSVImportModalMobile } from './components/CSVImportModalMobile';
 
 const isExpoGo = Constants.appOwnership === 'expo' || Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 const Notifications = isExpoGo ? null : require('expo-notifications');
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 const supabaseUrl = 'https://gkayyfwadwwsucpqeefw.supabase.co';
 const supabaseAnonKey = 'sb_publishable_VLg-MNbQe3Q7VrBG_ldcrA_cyTJ7lEv';
@@ -4402,9 +4406,15 @@ export default function App() {
     const currentY = event.nativeEvent.contentOffset.y;
     // Only toggle if scrolled more than a threshold (e.g. 15 pixels) to prevent jitter
     if (currentY - lastScrollY.current > 15 && currentY > 50) {
-      if (showHeaderFilters) setShowHeaderFilters(false);
+      if (showHeaderFilters) {
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        setShowHeaderFilters(false);
+      }
     } else if (lastScrollY.current - currentY > 15 || currentY <= 10) {
-      if (!showHeaderFilters) setShowHeaderFilters(true);
+      if (!showHeaderFilters) {
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        setShowHeaderFilters(true);
+      }
     }
     lastScrollY.current = currentY;
   };
