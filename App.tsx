@@ -364,35 +364,7 @@ export interface BrochureTemplate {
   url: string;
 }
 
-export interface WhatsAppTemplate {
-  id: string;
-  name: string;
-  body: string;
-  attachment_url?: string;
-  attachment_name?: string;
-  created_at: string;
-}
 
-export const DEFAULT_TEMPLATES: WhatsAppTemplate[] = [
-  {
-    id: 'welcome',
-    name: 'Welcome Message',
-    body: 'Hello {{lead_name}}, thank you for reaching out to MBBS Admission Consultancy. We have received your query for studying MBBS in {{preferred_destination}}. A counsellor will get in touch with you shortly.',
-    created_at: new Date().toISOString()
-  },
-  {
-    id: 'neet-followup',
-    name: 'Follow-up NEET Marks',
-    body: 'Dear {{lead_name}}, we noticed you scored {{neet_marks}} in NEET. We have excellent medical college options within your budget of {{budget}} in {{preferred_destination}}. Let us know a good time to connect!',
-    created_at: new Date().toISOString()
-  },
-  {
-    id: 'docs-checklist',
-    name: 'Document Checklist',
-    body: 'Hi {{lead_name}}, please share your 10th and 12th marksheet along with your NEET scorecard so we can begin the eligibility assessment process.',
-    created_at: new Date().toISOString()
-  }
-];
 
 export const BROCHURE_TEMPLATES: BrochureTemplate[] = [
   {
@@ -531,13 +503,6 @@ export default function App() {
   const [activeWhatsAppLead, setActiveWhatsAppLead] = useState<Lead | null>(null);
   const [isShareLoading, setIsShareLoading] = useState(false);
 
-  // WhatsApp Template States
-  const [whatsappTemplates, setWhatsappTemplates] = useState<WhatsAppTemplate[]>(DEFAULT_TEMPLATES);
-  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
-  const [tempName, setTempName] = useState('');
-  const [tempBody, setTempBody] = useState('');
-  const [tempAttachUrl, setTempAttachUrl] = useState('');
-  const [tempAttachName, setTempAttachName] = useState('');
 
   // Fetch all live data from Supabase
   const fetchData = async (silent = false) => {
@@ -615,13 +580,6 @@ export default function App() {
       setChatHistory(remappedChat);
       await AsyncStorage.setItem('m_chat', JSON.stringify(remappedChat));
 
-      // 6. Fetch WhatsApp templates
-      const { data: templatesData, error: templatesError } = await supabase
-        .from('whatsapp_templates')
-        .select('*');
-      if (templatesError) throw templatesError;
-      setWhatsappTemplates((templatesData || []) as WhatsAppTemplate[]);
-      await AsyncStorage.setItem('m_whatsapp_templates', JSON.stringify(templatesData || []));
 
       // 7. Fetch Visa Applications
       const { data: visaAppsData } = await supabase
@@ -697,7 +655,6 @@ export default function App() {
       const cachedTasks = await AsyncStorage.getItem('m_tasks');
       const cachedLogs = await AsyncStorage.getItem('m_logs');
       const cachedChat = await AsyncStorage.getItem('m_chat');
-      const cachedTemplates = await AsyncStorage.getItem('m_whatsapp_templates');
       const cachedVisaApps = await AsyncStorage.getItem('m_visa_apps');
       const cachedVisaReq = await AsyncStorage.getItem('m_visa_req_docs');
       const cachedVisaUp = await AsyncStorage.getItem('m_visa_up_docs');
@@ -718,12 +675,6 @@ export default function App() {
       if (cachedVisaApps) setVisaApplications(JSON.parse(cachedVisaApps));
       if (cachedVisaReq) setVisaRequiredDocs(JSON.parse(cachedVisaReq));
       if (cachedVisaUp) setVisaUploadedDocs(JSON.parse(cachedVisaUp));
-
-      if (cachedTemplates) {
-        setWhatsappTemplates(JSON.parse(cachedTemplates));
-      } else {
-        setWhatsappTemplates(DEFAULT_TEMPLATES);
-      }
 
       if (cachedPipelines) {
         setPipelines(JSON.parse(cachedPipelines));
@@ -1008,11 +959,6 @@ export default function App() {
       }
       if (isSettingsOpen) {
         setIsSettingsOpen(false);
-        setEditingTemplateId(null);
-        setTempName('');
-        setTempBody('');
-        setTempAttachUrl('');
-        setTempAttachName('');
         return true;
       }
       if (activeWhatsAppLead) {
@@ -1458,128 +1404,7 @@ export default function App() {
     }
   };
 
-  const handleSaveTemplate = async () => {
-    if (!tempName.trim() || !tempBody.trim()) {
-      Alert.alert("Error", "Template Name and Message Body are required.");
-      return;
-    }
 
-    try {
-      if (editingTemplateId) {
-        const { data, error } = await supabase
-          .from('whatsapp_templates')
-          .update({
-            name: tempName.trim(),
-            body: tempBody.trim(),
-            attachment_url: tempAttachUrl.trim() || null,
-            attachment_name: tempAttachName.trim() || null
-          })
-          .eq('id', editingTemplateId)
-          .select()
-          .single();
-
-        if (error) throw error;
-
-        const updated = whatsappTemplates.map(t => t.id === editingTemplateId ? (data as WhatsAppTemplate) : t);
-        setWhatsappTemplates(updated);
-        await AsyncStorage.setItem('m_whatsapp_templates', JSON.stringify(updated));
-        Alert.alert("Success", "Template updated successfully.");
-      } else {
-        const { data, error } = await supabase
-          .from('whatsapp_templates')
-          .insert([{
-            name: tempName.trim(),
-            body: tempBody.trim(),
-            attachment_url: tempAttachUrl.trim() || null,
-            attachment_name: tempAttachName.trim() || null,
-            tenant_id: currentUser?.tenant_id || 'default'
-          }])
-          .select()
-          .single();
-
-        if (error) throw error;
-
-        const updated = [...whatsappTemplates, data as WhatsAppTemplate];
-        setWhatsappTemplates(updated);
-        await AsyncStorage.setItem('m_whatsapp_templates', JSON.stringify(updated));
-        Alert.alert("Success", "Template created successfully.");
-      }
-
-      // Reset form
-      setEditingTemplateId(null);
-      setTempName('');
-      setTempBody('');
-      setTempAttachUrl('');
-      setTempAttachName('');
-    } catch (e: any) {
-      console.error("Error saving template:", e);
-      // Local fallback if offline
-      if (editingTemplateId) {
-        const updated = whatsappTemplates.map(t => {
-          if (t.id === editingTemplateId) {
-            return {
-              ...t,
-              name: tempName.trim(),
-              body: tempBody.trim(),
-              attachment_url: tempAttachUrl.trim() || undefined,
-              attachment_name: tempAttachName.trim() || undefined
-            };
-          }
-          return t;
-        });
-        setWhatsappTemplates(updated);
-        await AsyncStorage.setItem('m_whatsapp_templates', JSON.stringify(updated));
-        Alert.alert("Offline Success", "Template updated locally.");
-      } else {
-        const newT = {
-          id: `temp-${Date.now()}`,
-          name: tempName.trim(),
-          body: tempBody.trim(),
-          attachment_url: tempAttachUrl.trim() || undefined,
-          attachment_name: tempAttachName.trim() || undefined,
-          created_at: new Date().toISOString()
-        };
-        const updated = [...whatsappTemplates, newT];
-        setWhatsappTemplates(updated);
-        await AsyncStorage.setItem('m_whatsapp_templates', JSON.stringify(updated));
-        Alert.alert("Offline Success", "Template created locally.");
-      }
-      setEditingTemplateId(null);
-      setTempName('');
-      setTempBody('');
-      setTempAttachUrl('');
-      setTempAttachName('');
-    }
-  };
-
-  const handleDeleteTemplate = async (id: string) => {
-    Alert.alert(
-      "Confirm Delete",
-      "Are you sure you want to delete this template?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              const { error } = await supabase
-                .from('whatsapp_templates')
-                .delete()
-                .eq('id', id);
-              if (error) throw error;
-            } catch (e) {
-              console.log("Delete template offline or database issue: ", e);
-            }
-            const updated = whatsappTemplates.filter(t => t.id !== id);
-            setWhatsappTemplates(updated);
-            await AsyncStorage.setItem('m_whatsapp_templates', JSON.stringify(updated));
-            Alert.alert("Success", "Template deleted.");
-          }
-        }
-      ]
-    );
-  };
 
   // Lead additions
   const handleAddLead = async () => {
@@ -2816,183 +2641,7 @@ export default function App() {
               </TouchableOpacity>
             </View>
 
-            {/* WhatsApp Template Management Section */}
-            <Text style={styles.settingsSectionTitle}>WhatsApp Message Templates</Text>
 
-            {/* List of existing templates */}
-            <View style={{ marginTop: 5 }}>
-              {whatsappTemplates.map(tpl => (
-                <View 
-                  key={tpl.id} 
-                  style={{ 
-                    backgroundColor: theme.inputBg, 
-                    borderColor: theme.border, 
-                    borderWidth: 1, 
-                    borderRadius: 12, 
-                    padding: 10, 
-                    marginBottom: 10 
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text style={{ color: theme.text, fontSize: 12, fontWeight: 'bold' }}>{tpl.name}</Text>
-                    
-                    {/* Edit/Delete Buttons (Admin/Manager only) */}
-                    {(currentUser?.role === 'admin' || currentUser?.role === 'manager') && (
-                      <View style={{ flexDirection: 'row', gap: 10 }}>
-                        <TouchableOpacity 
-                          onPress={() => {
-                            setEditingTemplateId(tpl.id);
-                            setTempName(tpl.name);
-                            setTempBody(tpl.body);
-                            setTempAttachUrl(tpl.attachment_url || '');
-                            setTempAttachName(tpl.attachment_name || '');
-                          }}
-                        >
-                          <Text style={{ color: '#4F46E5', fontSize: 11, fontWeight: 'bold' }}>Edit</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={() => handleDeleteTemplate(tpl.id)}>
-                          <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: 'bold' }}>Delete</Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={{ color: theme.textMuted, fontSize: 11, marginTop: 4 }} numberOfLines={2}>
-                    {tpl.body}
-                  </Text>
-                  {tpl.attachment_url && (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 4 }}>
-                      <Text style={{ color: '#10B981', fontSize: 10, fontWeight: 'bold' }}>📎 Attachment:</Text>
-                      <Text style={{ color: theme.textMuted, fontSize: 10, flex: 1 }} numberOfLines={1}>
-                        {tpl.attachment_name || 'Unnamed'}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              ))}
-            </View>
-
-            {/* Form to Create/Edit Templates */}
-            {(currentUser?.role === 'admin' || currentUser?.role === 'manager') && (
-              <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: theme.border, paddingTop: 15 }}>
-                <Text style={{ color: theme.text, fontSize: 12, fontWeight: 'bold', marginBottom: 10 }}>
-                  {editingTemplateId ? 'Edit Template' : 'Add New Template'}
-                </Text>
-                
-                <Text style={{ color: theme.textMuted, fontSize: 10, marginBottom: 4 }}>Template Name</Text>
-                <TextInput
-                  style={{ 
-                    backgroundColor: theme.inputBg, 
-                    borderColor: theme.border, 
-                    borderWidth: 1, 
-                    borderRadius: 10, 
-                    padding: 8, 
-                    fontSize: 12, 
-                    color: theme.text, 
-                    marginBottom: 10 
-                  }}
-                  placeholder="Template Name"
-                  placeholderTextColor={theme.textMuted}
-                  value={tempName}
-                  onChangeText={setTempName}
-                />
-
-                <Text style={{ color: theme.textMuted, fontSize: 10, marginBottom: 4 }}>Message Body</Text>
-                <TextInput
-                  style={{ 
-                    backgroundColor: theme.inputBg, 
-                    borderColor: theme.border, 
-                    borderWidth: 1, 
-                    borderRadius: 10, 
-                    padding: 8, 
-                    fontSize: 12, 
-                    color: theme.text, 
-                    marginBottom: 10,
-                    height: 60,
-                    textAlignVertical: 'top'
-                  }}
-                  multiline={true}
-                  placeholder="Message body text..."
-                  placeholderTextColor={theme.textMuted}
-                  value={tempBody}
-                  onChangeText={setTempBody}
-                />
-
-                <Text style={{ color: theme.textMuted, fontSize: 10, marginBottom: 4 }}>Attachment URL (Optional PDF/Image)</Text>
-                <TextInput
-                  style={{ 
-                    backgroundColor: theme.inputBg, 
-                    borderColor: theme.border, 
-                    borderWidth: 1, 
-                    borderRadius: 10, 
-                    padding: 8, 
-                    fontSize: 12, 
-                    color: theme.text, 
-                    marginBottom: 10 
-                  }}
-                  placeholder="https://example.com/brochure.pdf"
-                  placeholderTextColor={theme.textMuted}
-                  value={tempAttachUrl}
-                  onChangeText={setTempAttachUrl}
-                />
-
-                <Text style={{ color: theme.textMuted, fontSize: 10, marginBottom: 4 }}>Attachment File Name (Optional)</Text>
-                <TextInput
-                  style={{ 
-                    backgroundColor: theme.inputBg, 
-                    borderColor: theme.border, 
-                    borderWidth: 1, 
-                    borderRadius: 10, 
-                    padding: 8, 
-                    fontSize: 12, 
-                    color: theme.text, 
-                    marginBottom: 12 
-                  }}
-                  placeholder="MBBS_Russia.pdf"
-                  placeholderTextColor={theme.textMuted}
-                  value={tempAttachName}
-                  onChangeText={setTempAttachName}
-                />
-
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                  <TouchableOpacity 
-                    style={{ 
-                      flex: 1, 
-                      backgroundColor: '#4F46E5', 
-                      borderRadius: 10, 
-                      paddingVertical: 10, 
-                      alignItems: 'center' 
-                    }}
-                    onPress={handleSaveTemplate}
-                  >
-                    <Text style={{ color: '#FFF', fontSize: 11, fontWeight: 'bold' }}>
-                      {editingTemplateId ? 'Update' : 'Add Template'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  {editingTemplateId && (
-                    <TouchableOpacity 
-                      style={{ 
-                        backgroundColor: theme.inputBg, 
-                        borderColor: theme.border, 
-                        borderWidth: 1, 
-                        borderRadius: 10, 
-                        paddingHorizontal: 15, 
-                        justifyContent: 'center' 
-                      }}
-                      onPress={() => {
-                        setEditingTemplateId(null);
-                        setTempName('');
-                        setTempBody('');
-                        setTempAttachUrl('');
-                        setTempAttachName('');
-                      }}
-                    >
-                      <Text style={{ color: theme.text, fontSize: 11 }}>Cancel</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-            )}
           </ScrollView>
 
           {/* Dismiss Button */}
@@ -3000,11 +2649,6 @@ export default function App() {
             style={styles.closeSettingsBtn} 
             onPress={() => {
               setIsSettingsOpen(false);
-              setEditingTemplateId(null);
-              setTempName('');
-              setTempBody('');
-              setTempAttachUrl('');
-              setTempAttachName('');
             }}
           >
             <Text style={styles.closeSettingsBtnText}>Close & Save Preferences</Text>
@@ -3046,42 +2690,7 @@ export default function App() {
     }
   };
 
-  const sendWhatsAppTemplate = async (template: WhatsAppTemplate, lead: Lead) => {
-    let body = template.body
-      .replace('{{lead_name}}', lead.name)
-      .replace('{{neet_marks}}', String(lead.neet_marks || 200))
-      .replace('{{budget}}', lead.budget ? `${(lead.budget / 100000).toFixed(1)} Lakh` : '40 Lakh')
-      .replace('{{preferred_destination}}', lead.preferred_destination || 'Georgia/Russia');
 
-    if (template.attachment_url) {
-      body += `\n\n📄 Document: ${template.attachment_url}`;
-    }
-
-    const targetPhone = lead.whatsapp_number || lead.phone;
-    let cleanPhone = targetPhone.replace(/[^0-9]/g, '');
-    if (cleanPhone.length === 10) {
-      cleanPhone = `91${cleanPhone}`;
-    } else if (cleanPhone.length === 11 && cleanPhone.startsWith('0')) {
-      cleanPhone = `91${cleanPhone.substring(1)}`;
-    }
-    const url = `whatsapp://send?phone=${cleanPhone}&text=${encodeURIComponent(body)}`;
-    
-    Linking.openURL(url).catch(() => {
-      Linking.openURL(`https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(body)}`);
-    });
-
-    try {
-      await supabase.from('activity_logs').insert([{
-        lead_id: lead.id,
-        actor_id: currentUser?.id,
-        action_type: 'whatsapp_sent',
-        description: `Sent WhatsApp template: "${template.name}"`,
-        tenant_id: currentUser?.tenant_id || 'default'
-      }]);
-    } catch (e) {
-      console.error("Error logging WhatsApp template sent:", e);
-    }
-  };
 
   const shareBrochurePdf = async (brochure: BrochureTemplate, lead: Lead) => {
     try {
@@ -3121,82 +2730,7 @@ export default function App() {
     }
   };
 
-  const renderWhatsAppModal = () => {
-    if (!activeWhatsAppLead) return null;
-    return (
-      <View style={styles.settingsModalOverlay}>
-        <View style={[styles.settingsModalContent, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
-          <Text style={[styles.settingsTitle, { color: theme.text }]}>Share via WhatsApp</Text>
-          <Text style={{ color: theme.textMuted, fontSize: 11, marginBottom: 20 }}>
-            Choose a brochure or text template to send to {activeWhatsAppLead.name} ({activeWhatsAppLead.phone})
-          </Text>
-
-          {/* Option 1: Direct Text Message */}
-          <TouchableOpacity 
-            style={[styles.brochureOptionBtn, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', borderColor: darkMode ? '#475569' : '#C7D2FE' }]}
-            onPress={() => {
-              sendDirectWhatsAppText(activeWhatsAppLead);
-              setActiveWhatsAppLead(null);
-            }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <MessageSquare size={18} color="#4F46E5" />
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.brochureOptionTitle, { color: theme.text }]}>Direct Text Message Only</Text>
-                <Text style={[styles.brochureOptionSub, { color: theme.textMuted }]}>Send instant welcome text message</Text>
-              </View>
-            </View>
-          </TouchableOpacity>
-
-          <Text style={[styles.settingsSectionTitle, { marginTop: 15, marginBottom: 8 }]}>Custom Templates & Attachments</Text>
-
-          {/* Templates list wrapped in ScrollView */}
-          <ScrollView style={{ maxHeight: 240, width: '100%' }} nestedScrollEnabled={true}>
-            {whatsappTemplates.map(template => (
-              <TouchableOpacity 
-                key={template.id}
-                style={[styles.brochureOptionBtn, { backgroundColor: theme.inputBg, borderColor: theme.border }]}
-                onPress={() => {
-                  sendWhatsAppTemplate(template, activeWhatsAppLead);
-                  setActiveWhatsAppLead(null);
-                }}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  {template.attachment_url ? (
-                    <PlusCircle size={18} color="#10B981" />
-                  ) : (
-                    <MessageSquare size={18} color="#4F46E5" />
-                  )}
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.brochureOptionTitle, { color: theme.text }]}>{template.name}</Text>
-                    <Text style={[styles.brochureOptionSub, { color: theme.textMuted }]} numberOfLines={1}>
-                      {template.attachment_url ? `📎 ${template.attachment_name || 'Attachment'}` : template.body}
-                    </Text>
-                  </View>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-
-          {/* Cancel Button */}
-          <TouchableOpacity 
-            style={[styles.closeSettingsBtn, { backgroundColor: '#EF4444', marginTop: 15 }]} 
-            onPress={() => setActiveWhatsAppLead(null)}
-          >
-            <Text style={styles.closeSettingsBtnText}>Dismiss / Cancel</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Global Share loading spinner */}
-        {isShareLoading && (
-          <View style={styles.shareLoadingOverlay}>
-            <ActivityIndicator size="large" color="#4F46E5" />
-            <Text style={{ color: '#FFF', marginTop: 10, fontWeight: 'bold', fontSize: 12 }}>Preparing attachment file...</Text>
-          </View>
-        )}
-      </View>
-    );
-  };
+  const renderWhatsAppModal = () => null;
 
   // WhatsApp Simulation chats
   const handleSendWhatsAppSim = async () => {
@@ -4620,51 +4154,7 @@ export default function App() {
           })}
         </ScrollView>
 
-        {/* Quick Templates Panel */}
-        {whatsappTemplates.length > 0 && (
-          <View style={{ borderTopWidth: 1, borderTopColor: theme.border, backgroundColor: theme.cardBg, paddingVertical: 8 }}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 15, gap: 8, flexDirection: 'row' }}>
-              {whatsappTemplates.map(temp => (
-                <TouchableOpacity
-                  key={temp.id}
-                  style={{
-                    paddingHorizontal: 12,
-                    paddingVertical: 6,
-                    borderRadius: 20,
-                    backgroundColor: darkMode ? '#334155' : '#F1F5F9',
-                    borderWidth: 1,
-                    borderColor: theme.border
-                  }}
-                  onPress={() => {
-                    Alert.alert(
-                      "Send Template",
-                      `Are you sure you want to send the "${temp.name}" template message to ${activeLeadName}?`,
-                      [
-                        { text: "Cancel", style: "cancel" },
-                        { 
-                          text: "Send", 
-                          onPress: () => {
-                            let parsedBody = temp.body
-                              .replace('{{lead_name}}', activeLeadName)
-                              .replace('{{neet_marks}}', String(activeLead?.neet_marks || 200))
-                              .replace('{{budget}}', activeLead?.budget ? `${(activeLead.budget / 100000).toFixed(1)} Lakh` : '40 Lakh')
-                              .replace('{{preferred_destination}}', activeLead?.preferred_destination || 'Georgia/Russia');
-                            if (temp.attachment_url) {
-                              parsedBody += `\n\n📄 Document: ${temp.attachment_url}`;
-                            }
-                            handleSendSharedInboxMsg(activeLead!, parsedBody);
-                          } 
-                        }
-                      ]
-                    );
-                  }}
-                >
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#4F46E5' }}>📝 {temp.name}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        )}
+
 
         {/* Input Bar */}
         <View style={{
