@@ -463,6 +463,9 @@ export default function App() {
   const [reminderHour, setReminderHour] = useState('10');
   const [reminderMinute, setReminderMinute] = useState('00');
   const [reminderAmPm, setReminderAmPm] = useState('AM');
+  // Qualify / Disqualify states
+  const [isDisqualifySheetOpen, setIsDisqualifySheetOpen] = useState(false);
+  const [disqualifyReason, setDisqualifyReason] = useState('');
   
   // Task Due Date/Time States
   const [taskDate, setTaskDate] = useState('');
@@ -1762,6 +1765,76 @@ export default function App() {
     }
   };
 
+  const DISQUALIFY_REASONS = [
+    "Didn't make the inquiry",
+    'Not interested anymore',
+    'No reply given',
+    'Wrong number / not reachable',
+    'Budget mismatch',
+    'Already enrolled elsewhere',
+    'Other'
+  ];
+
+  const handleQualifyLead = async () => {
+    if (!feedbackLead) return;
+    try {
+      await supabase
+        .from('leads')
+        .update({ status: 'qualified', updated_at: new Date().toISOString() })
+        .eq('id', feedbackLead.id);
+
+      await supabase.from('activity_logs').insert([{
+        lead_id: feedbackLead.id,
+        actor_id: currentUser?.id,
+        action_type: 'lead_qualified',
+        description: 'Lead marked as Qualified after call',
+        tenant_id: currentUser?.tenant_id || 'default'
+      }]);
+
+      // Update local state
+      setLeads(prev => prev.map(l => l.id === feedbackLead.id ? { ...l, status: 'qualified' } : l));
+      if (selectedLead?.id === feedbackLead.id) setSelectedLead(prev => prev ? { ...prev, status: 'qualified' } : prev);
+
+      setFeedbackLead(null);
+      setFeedbackNotes('');
+      setFeedbackReminder(false);
+      Alert.alert('✅ Qualified', `${feedbackLead.name} has been marked as Qualified.`);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to qualify lead.');
+    }
+  };
+
+  const handleDisqualifyLead = async (reason: string) => {
+    if (!feedbackLead) return;
+    try {
+      await supabase
+        .from('leads')
+        .update({ status: 'disqualified', updated_at: new Date().toISOString() })
+        .eq('id', feedbackLead.id);
+
+      await supabase.from('activity_logs').insert([{
+        lead_id: feedbackLead.id,
+        actor_id: currentUser?.id,
+        action_type: 'lead_disqualified',
+        description: `Lead disqualified after call — Reason: ${reason}`,
+        tenant_id: currentUser?.tenant_id || 'default'
+      }]);
+
+      // Update local state
+      setLeads(prev => prev.map(l => l.id === feedbackLead.id ? { ...l, status: 'disqualified' } : l));
+      if (selectedLead?.id === feedbackLead.id) setSelectedLead(prev => prev ? { ...prev, status: 'disqualified' } : prev);
+
+      setIsDisqualifySheetOpen(false);
+      setDisqualifyReason('');
+      setFeedbackLead(null);
+      setFeedbackNotes('');
+      setFeedbackReminder(false);
+      Alert.alert('🚫 Disqualified', `${feedbackLead.name} has been marked as Disqualified.\nReason: ${reason}`);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to disqualify lead.');
+    }
+  };
+
   const handleUpdateLeadField = async (field: 'status' | 'assigned_counsellor_id', value: string | null) => {
     if (!selectedLead) return;
     
@@ -2555,10 +2628,99 @@ export default function App() {
             </View>
           )}
 
+          {/* Qualify / Disqualify Section */}
+          <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: darkMode ? '#334155' : '#E2E8F0', paddingTop: 12 }}>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: darkMode ? '#94A3B8' : '#64748B', letterSpacing: 0.5, marginBottom: 8, textTransform: 'uppercase' }}>Lead Outcome</Text>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  backgroundColor: '#10B981',
+                  borderRadius: 12,
+                  paddingVertical: 10,
+                  alignItems: 'center',
+                  flexDirection: 'row',
+                  justifyContent: 'center',
+                  gap: 6
+                }}
+                onPress={handleQualifyLead}
+              >
+                <Text style={{ fontSize: 13, color: '#FFF' }}>✅</Text>
+                <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 13 }}>Qualify</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  backgroundColor: '#EF4444',
+                  borderRadius: 12,
+                  paddingVertical: 10,
+                  alignItems: 'center',
+                  flexDirection: 'row',
+                  justifyContent: 'center',
+                  gap: 6
+                }}
+                onPress={() => {
+                  setIsDisqualifySheetOpen(true);
+                  setDisqualifyReason('');
+                }}
+              >
+                <Text style={{ fontSize: 13, color: '#FFF' }}>🚫</Text>
+                <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 13 }}>Disqualify</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Disqualify Reason Sheet */}
+          {isDisqualifySheetOpen && (
+            <View style={{ marginTop: 12, backgroundColor: darkMode ? '#1E293B' : '#F8FAFC', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: darkMode ? '#475569' : '#E2E8F0' }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: darkMode ? '#E2E8F0' : '#0F172A', marginBottom: 10 }}>Select Disqualify Reason</Text>
+              {DISQUALIFY_REASONS.map(reason => (
+                <TouchableOpacity
+                  key={reason}
+                  style={{
+                    paddingVertical: 10,
+                    paddingHorizontal: 12,
+                    borderRadius: 10,
+                    marginBottom: 6,
+                    backgroundColor: disqualifyReason === reason
+                      ? '#EF4444'
+                      : (darkMode ? '#0F172A' : '#FFF'),
+                    borderWidth: 1,
+                    borderColor: disqualifyReason === reason ? '#EF4444' : (darkMode ? '#334155' : '#E2E8F0')
+                  }}
+                  onPress={() => setDisqualifyReason(reason)}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: disqualifyReason === reason ? '700' : '500', color: disqualifyReason === reason ? '#FFF' : (darkMode ? '#E2E8F0' : '#0F172A') }}>
+                    {reason}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 6 }}>
+                <TouchableOpacity
+                  style={{ flex: 1, paddingVertical: 10, borderRadius: 10, backgroundColor: darkMode ? '#334155' : '#E2E8F0', alignItems: 'center' }}
+                  onPress={() => { setIsDisqualifySheetOpen(false); setDisqualifyReason(''); }}
+                >
+                  <Text style={{ color: darkMode ? '#94A3B8' : '#64748B', fontSize: 12, fontWeight: '600' }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[{ flex: 2, paddingVertical: 10, borderRadius: 10, alignItems: 'center' }, disqualifyReason ? { backgroundColor: '#EF4444' } : { backgroundColor: '#94A3B8' }]}
+                  disabled={!disqualifyReason}
+                  onPress={() => disqualifyReason && handleDisqualifyLead(disqualifyReason)}
+                >
+                  <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '700' }}>Confirm Disqualify</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
           <View style={styles.modalActionsRow}>
             <TouchableOpacity 
               style={styles.cancelModalBtn} 
-              onPress={() => setFeedbackLead(null)}
+              onPress={() => {
+                setFeedbackLead(null);
+                setIsDisqualifySheetOpen(false);
+                setDisqualifyReason('');
+              }}
             >
               <Text style={styles.cancelModalBtnText}>Skip / Dismiss</Text>
             </TouchableOpacity>
