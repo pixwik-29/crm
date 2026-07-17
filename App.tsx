@@ -462,6 +462,8 @@ export default function App() {
   const [selectedInboxLeadId, setSelectedInboxLeadId] = useState<string | null>(null);
   const [inboxMessageInput, setInboxMessageInput] = useState('');
   const [lastSeenMap, setLastSeenMap] = useState<Record<string, string>>({});
+  const [showHeaderFilters, setShowHeaderFilters] = useState(true);
+  const lastScrollY = useRef(0);
   const [prevScreen, setPrevScreen] = useState<'dashboard' | 'tasksList'>('dashboard');
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   
@@ -4672,6 +4674,17 @@ export default function App() {
     );
   }
 
+  const handleScroll = (event: any) => {
+    const currentY = event.nativeEvent.contentOffset.y;
+    // Only toggle if scrolled more than a threshold (e.g. 15 pixels) to prevent jitter
+    if (currentY - lastScrollY.current > 15 && currentY > 50) {
+      if (showHeaderFilters) setShowHeaderFilters(false);
+    } else if (lastScrollY.current - currentY > 15 || currentY <= 10) {
+      if (!showHeaderFilters) setShowHeaderFilters(true);
+    }
+    lastScrollY.current = currentY;
+  };
+
   // --- DASHBOARD VIEW ---
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
@@ -4728,7 +4741,9 @@ export default function App() {
 
       {dashboardTab === 'leads' && (
       <>
-      {/* Pipeline Scroll view selector - FIXED */}
+        {showHeaderFilters && (
+          <>
+          {/* Pipeline Scroll view selector - FIXED */}
       {pipelines.length > 0 && (
         <View style={[styles.pipelineSelectorContainer, { borderBottomColor: theme.border }]}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 15, paddingVertical: 10, gap: 10, flexDirection: 'row' }}>
@@ -4862,9 +4877,16 @@ export default function App() {
           style={[styles.searchTextInput, { color: theme.text }]}
         />
       </View>
+          </>
+        )}
 
-      {/* Leads Scroll list - stats + action header scroll with leads */}
-      <ScrollView style={[styles.listScroll, { backgroundColor: theme.bg }]} contentContainerStyle={{ paddingBottom: 20 }}>
+        {/* Leads Scroll list - stats + action header scroll with leads */}
+        <ScrollView 
+          style={[styles.listScroll, { backgroundColor: theme.bg }]} 
+          contentContainerStyle={{ paddingBottom: 20 }}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+        >
 
         {/* Stats Summary Panel - scrolls with leads */}
         <View style={[styles.statsSummaryRow, { marginTop: 0 }]}>
