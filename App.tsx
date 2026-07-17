@@ -538,9 +538,11 @@ export default function App() {
   const [tempAttachName, setTempAttachName] = useState('');
 
   // Fetch all live data from Supabase
-  const fetchData = async () => {
+  const fetchData = async (silent = false) => {
     try {
-      setIsLoading(true);
+      if (!silent) {
+        setIsLoading(true);
+      }
 
       // Verify active session before querying to prevent RLS returning empty lists and overwriting cache
       const { data: { session } } = await supabase.auth.getSession();
@@ -1105,7 +1107,7 @@ export default function App() {
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active' && currentUser) {
-        fetchData();
+        fetchData(true);
       }
     });
     return () => subscription.remove();
