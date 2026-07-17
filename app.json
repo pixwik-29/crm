@@ -33,6 +33,7 @@
     "android": {
       "package": "com.perfectscholar.crm",
       "googleServicesFile": "./google-services.json",
+      "versionCode": 13,
       "icon": "./assets/icon.png",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
