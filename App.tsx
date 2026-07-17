@@ -2952,7 +2952,7 @@ export default function App() {
         lead_id: selectedLead.id,
         actor_id: currentUser?.id,
         action_type: 'whatsapp_sent',
-        description: `Sent custom WhatsApp reply: "${messageText.substring(0, 30)}..."`,
+        description: `Sent WhatsApp reply: "${messageText.substring(0, 30)}..."`,
         tenant_id: currentUser?.tenant_id || 'default'
       }]);
 
@@ -2967,7 +2967,58 @@ export default function App() {
       };
       setChatHistory(prev => [...prev, remappedNewMsg]);
 
-      // 2. Chatbot reply simulation after 2.5 seconds
+      // Try sending a real Meta WhatsApp message
+      let sentRealMessage = false;
+      let errorMsg = '';
+      try {
+        const { data: settingsData } = await supabase
+          .from('settings')
+          .select('meta_access_token, whatsapp_phone_id')
+          .single();
+
+        if (settingsData?.meta_access_token && settingsData?.whatsapp_phone_id) {
+          const cleanPhone = (selectedLead.whatsapp_number || selectedLead.phone).replace(/\D/g, '');
+          const url = `https://graph.facebook.com/v19.0/${settingsData.whatsapp_phone_id}/messages`;
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${settingsData.meta_access_token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              messaging_product: 'whatsapp',
+              recipient_type: 'individual',
+              to: cleanPhone,
+              type: 'text',
+              text: { body: messageText }
+            })
+          });
+
+          const resData = await response.json();
+          if (response.ok) {
+            sentRealMessage = true;
+            await supabase
+              .from('whatsapp_history')
+              .update({ status: 'delivered' })
+              .eq('id', newMsg.id);
+          } else {
+            errorMsg = resData.error?.message || 'Meta API error';
+            console.warn('[WhatsApp Meta Send] Failed:', errorMsg);
+          }
+        }
+      } catch (settingsErr: any) {
+        console.warn('[WhatsApp Meta Send] Credentials fetch or send failed:', settingsErr.message);
+      }
+
+      if (sentRealMessage) {
+        return; // Bypasses chatbot simulator for actual live conversations
+      }
+
+      if (errorMsg) {
+        Alert.alert("Warning", `Message logged, but could not send to phone: ${errorMsg}`);
+      }
+
+      // 2. Chatbot reply simulation after 2.5 seconds (only for local test/sim fallback)
       setTimeout(async () => {
         try {
           const replyText = "Got your message. I am currently out with my parents, but I will check the college brochures by tonight. Thank you!";
@@ -3002,7 +3053,7 @@ export default function App() {
       }, 2500);
 
     } catch (e: any) {
-      Alert.alert("Error", e.message || "Failed to send simulated WhatsApp message.");
+      Alert.alert("Error", e.message || "Failed to send WhatsApp message.");
     }
   };
 
@@ -4025,8 +4076,59 @@ export default function App() {
         rawTime: newMsg.created_at
       };
       setChatHistory(prev => [...prev, remappedNewMsg]);
-      
-      // Simulate reply after 2.5 seconds (same as detail view chat)
+
+      // Try sending a real Meta WhatsApp message
+      let sentRealMessage = false;
+      let errorMsg = '';
+      try {
+        const { data: settingsData } = await supabase
+          .from('settings')
+          .select('meta_access_token, whatsapp_phone_id')
+          .single();
+
+        if (settingsData?.meta_access_token && settingsData?.whatsapp_phone_id) {
+          const cleanPhone = (lead.whatsapp_number || lead.phone).replace(/\D/g, '');
+          const url = `https://graph.facebook.com/v19.0/${settingsData.whatsapp_phone_id}/messages`;
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${settingsData.meta_access_token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              messaging_product: 'whatsapp',
+              recipient_type: 'individual',
+              to: cleanPhone,
+              type: 'text',
+              text: { body: textToSend }
+            })
+          });
+
+          const resData = await response.json();
+          if (response.ok) {
+            sentRealMessage = true;
+            await supabase
+              .from('whatsapp_history')
+              .update({ status: 'delivered' })
+              .eq('id', newMsg.id);
+          } else {
+            errorMsg = resData.error?.message || 'Meta API error';
+            console.warn('[WhatsApp Meta Send Inbox] Failed:', errorMsg);
+          }
+        }
+      } catch (settingsErr: any) {
+        console.warn('[WhatsApp Meta Send Inbox] Credentials fetch or send failed:', settingsErr.message);
+      }
+
+      if (sentRealMessage) {
+        return; // Bypasses chatbot simulator for actual live conversations
+      }
+
+      if (errorMsg) {
+        Alert.alert("Warning", `Message logged, but could not send to phone: ${errorMsg}`);
+      }
+
+      // Simulate reply after 2.5 seconds (only for local test/sim fallback)
       setTimeout(async () => {
         try {
           const replyText = "Got your message. I am currently out with my parents, but I will check the college brochures by tonight. Thank you!";
@@ -4059,9 +4161,9 @@ export default function App() {
         }
       }, 2500);
       
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      Alert.alert("Error", "Failed to send message");
+      Alert.alert("Error", e.message || "Failed to send message");
     }
   };
 
