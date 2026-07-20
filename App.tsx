@@ -2620,277 +2620,288 @@ export default function App() {
     if (!feedbackLead) return null;
     return (
       <View style={styles.feedbackModalOverlay}>
-        <View style={styles.feedbackModalContent}>
-          <Text style={styles.feedbackTitle}>Call Follow-Up: {feedbackLead.name}</Text>
-          
-          <Text style={styles.feedbackSectionLabel}>Call Notes</Text>
-          <TextInput
-            style={styles.feedbackNoteInput}
-            placeholder="Type feedback, budget details, or course interest..."
-            placeholderTextColor="#94A3B8"
-            value={feedbackNotes}
-            onChangeText={setFeedbackNotes}
-            multiline={true}
-            numberOfLines={3}
-          />
-
-          <View style={styles.feedbackSwitchRow}>
-            <Text style={styles.feedbackSwitchLabel}>Set Follow-up Reminder</Text>
-            <TouchableOpacity 
-              style={[styles.customToggle, feedbackReminder && styles.customToggleActive]}
-              onPress={() => setFeedbackReminder(!feedbackReminder)}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ width: '100%', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <View style={[styles.feedbackModalContent, { backgroundColor: theme.cardBg, borderColor: theme.border, maxHeight: '90%' }]}>
+            <ScrollView 
+              showsVerticalScrollIndicator={false} 
+              keyboardShouldPersistTaps="handled"
+              style={{ width: '100%' }}
             >
-              <View style={[styles.customToggleCircle, feedbackReminder && styles.customToggleCircleActive]} />
-            </TouchableOpacity>
-          </View>
+              <Text style={[styles.feedbackTitle, { color: theme.text }]}>Call Follow-Up: {feedbackLead.name}</Text>
+              
+              <Text style={[styles.feedbackSectionLabel, { color: theme.textMuted }]}>Call Notes</Text>
+              <TextInput
+                style={[styles.feedbackNoteInput, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder, color: theme.inputText }]}
+                placeholder="Type feedback, budget details, or course interest..."
+                placeholderTextColor="#94A3B8"
+                value={feedbackNotes}
+                onChangeText={setFeedbackNotes}
+                multiline={true}
+                numberOfLines={3}
+              />
 
-          {feedbackReminder && (
-            <View style={styles.reminderContainer}>
-              <Text style={styles.feedbackSubLabel}>Quick Presets</Text>
-              <View style={styles.presetsRow}>
-                <TouchableOpacity style={styles.presetBtn} onPress={() => setPresetReminder(2)}>
-                  <Text style={styles.presetBtnText}>In 2 Hrs</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.presetBtn} onPress={() => setPresetReminder(0, true)}>
-                  <Text style={styles.presetBtnText}>Tom. 10am</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.presetBtn} onPress={() => setPresetReminder(0, false, true)}>
-                  <Text style={styles.presetBtnText}>Tom. 3pm</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.presetBtn} onPress={() => setPresetReminder(0, false, false, true)}>
-                  <Text style={styles.presetBtnText}>In 2 Days</Text>
+              <View style={styles.feedbackSwitchRow}>
+                <Text style={[styles.feedbackSwitchLabel, { color: theme.text }]}>Set Follow-up Reminder</Text>
+                <TouchableOpacity 
+                  style={[styles.customToggle, feedbackReminder && styles.customToggleActive]}
+                  onPress={() => setFeedbackReminder(!feedbackReminder)}
+                >
+                  <View style={[styles.customToggleCircle, feedbackReminder && styles.customToggleCircleActive]} />
                 </TouchableOpacity>
               </View>
 
-              <Text style={styles.feedbackSubLabel}>Custom Schedule</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-                
-                {/* Date Selector Widget */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={{ fontSize: 11, color: theme.textMuted }}>Date:</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.inputBg, borderWidth: 1, borderColor: theme.inputBorder, borderRadius: 8, padding: 2 }}>
-                    <TouchableOpacity 
-                      style={styles.adjustBtn} 
-                      onPress={() => {
-                        let d = parseInt(reminderDate) || 1;
-                        d = d === 1 ? 31 : d - 1;
-                        setReminderDate(d.toString());
-                      }}
-                    >
-                      <Text style={[styles.adjustBtnText, { color: theme.text }]}>-</Text>
+              {feedbackReminder && (
+                <View style={[styles.reminderContainer, { backgroundColor: darkMode ? '#1E293B' : '#F8FAFC', borderColor: theme.border }]}>
+                  <Text style={[styles.feedbackSubLabel, { color: theme.text }]}>Quick Presets</Text>
+                  <View style={styles.presetsRow}>
+                    <TouchableOpacity style={styles.presetBtn} onPress={() => setPresetReminder(2)}>
+                      <Text style={styles.presetBtnText}>In 2 Hrs</Text>
                     </TouchableOpacity>
-                    <Text style={{ width: 22, textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: theme.text }}>{reminderDate.padStart(2, '0')}</Text>
-                    <TouchableOpacity 
-                      style={styles.adjustBtn} 
-                      onPress={() => {
-                        let d = parseInt(reminderDate) || 1;
-                        d = d === 31 ? 1 : d + 1;
-                        setReminderDate(d.toString());
-                      }}
-                    >
-                      <Text style={[styles.adjustBtnText, { color: theme.text }]}>+</Text>
+                    <TouchableOpacity style={styles.presetBtn} onPress={() => setPresetReminder(0, true)}>
+                      <Text style={styles.presetBtnText}>Tom. 10am</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.presetBtn} onPress={() => setPresetReminder(0, false, true)}>
+                      <Text style={styles.presetBtnText}>Tom. 3pm</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.presetBtn} onPress={() => setPresetReminder(0, false, false, true)}>
+                      <Text style={styles.presetBtnText}>In 2 Days</Text>
                     </TouchableOpacity>
                   </View>
-                  
-                  <Text style={{ color: theme.textMuted, fontSize: 12 }}>/</Text>
-                  
-                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.inputBg, borderWidth: 1, borderColor: theme.inputBorder, borderRadius: 8, padding: 2 }}>
-                    <TouchableOpacity 
-                      style={styles.adjustBtn} 
-                      onPress={() => {
-                        let m = parseInt(reminderMonth) || 1;
-                        m = m === 1 ? 12 : m - 1;
-                        setReminderMonth(m.toString());
-                      }}
-                    >
-                      <Text style={[styles.adjustBtnText, { color: theme.text }]}>-</Text>
-                    </TouchableOpacity>
-                    <Text style={{ width: 22, textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: theme.text }}>{reminderMonth.padStart(2, '0')}</Text>
-                    <TouchableOpacity 
-                      style={styles.adjustBtn} 
-                      onPress={() => {
-                        let m = parseInt(reminderMonth) || 1;
-                        m = m === 12 ? 1 : m + 1;
-                        setReminderMonth(m.toString());
-                      }}
-                    >
-                      <Text style={[styles.adjustBtnText, { color: theme.text }]}>+</Text>
-                    </TouchableOpacity>
+
+                  <Text style={[styles.feedbackSubLabel, { color: theme.text, marginTop: 8 }]}>Custom Schedule</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+                    
+                    {/* Date Selector Widget */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={{ fontSize: 11, color: theme.textMuted }}>Date:</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.inputBg, borderWidth: 1, borderColor: theme.inputBorder, borderRadius: 8, padding: 2 }}>
+                        <TouchableOpacity 
+                          style={styles.adjustBtn} 
+                          onPress={() => {
+                            let d = parseInt(reminderDate) || 1;
+                            d = d === 1 ? 31 : d - 1;
+                            setReminderDate(d.toString());
+                          }}
+                        >
+                          <Text style={[styles.adjustBtnText, { color: theme.text }]}>-</Text>
+                        </TouchableOpacity>
+                        <Text style={{ width: 22, textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: theme.text }}>{reminderDate.padStart(2, '0')}</Text>
+                        <TouchableOpacity 
+                          style={styles.adjustBtn} 
+                          onPress={() => {
+                            let d = parseInt(reminderDate) || 1;
+                            d = d === 31 ? 1 : d + 1;
+                            setReminderDate(d.toString());
+                          }}
+                        >
+                          <Text style={[styles.adjustBtnText, { color: theme.text }]}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                      
+                      <Text style={{ color: theme.textMuted, fontSize: 12 }}>/</Text>
+                      
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.inputBg, borderWidth: 1, borderColor: theme.inputBorder, borderRadius: 8, padding: 2 }}>
+                        <TouchableOpacity 
+                          style={styles.adjustBtn} 
+                          onPress={() => {
+                            let m = parseInt(reminderMonth) || 1;
+                            m = m === 1 ? 12 : m - 1;
+                            setReminderMonth(m.toString());
+                          }}
+                        >
+                          <Text style={[styles.adjustBtnText, { color: theme.text }]}>-</Text>
+                        </TouchableOpacity>
+                        <Text style={{ width: 22, textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: theme.text }}>{reminderMonth.padStart(2, '0')}</Text>
+                        <TouchableOpacity 
+                          style={styles.adjustBtn} 
+                          onPress={() => {
+                            let m = parseInt(reminderMonth) || 1;
+                            m = m === 12 ? 1 : m + 1;
+                            setReminderMonth(m.toString());
+                          }}
+                        >
+                          <Text style={[styles.adjustBtnText, { color: theme.text }]}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* Time Selector Widget */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={{ fontSize: 11, color: theme.textMuted }}>Time:</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.inputBg, borderWidth: 1, borderColor: theme.inputBorder, borderRadius: 8, padding: 2 }}>
+                        <TouchableOpacity 
+                          style={styles.adjustBtn} 
+                          onPress={() => {
+                            let h = parseInt(reminderHour) || 12;
+                            h = h === 1 ? 12 : h - 1;
+                            setReminderHour(h.toString().padStart(2, '0'));
+                          }}
+                        >
+                          <Text style={[styles.adjustBtnText, { color: theme.text }]}>-</Text>
+                        </TouchableOpacity>
+                        <Text style={{ width: 22, textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: theme.text }}>{reminderHour}</Text>
+                        <TouchableOpacity 
+                          style={styles.adjustBtn} 
+                          onPress={() => {
+                            let h = parseInt(reminderHour) || 12;
+                            h = h === 12 ? 1 : h + 1;
+                            setReminderHour(h.toString().padStart(2, '0'));
+                          }}
+                        >
+                          <Text style={[styles.adjustBtnText, { color: theme.text }]}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                      
+                      <Text style={{ color: theme.textMuted, fontSize: 12 }}>:</Text>
+                      
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.inputBg, borderWidth: 1, borderColor: theme.inputBorder, borderRadius: 8, padding: 2 }}>
+                        <TouchableOpacity 
+                          style={styles.adjustBtn} 
+                          onPress={() => {
+                            let min = parseInt(reminderMinute) || 0;
+                            min = min === 0 ? 45 : min - 15;
+                            setReminderMinute(min.toString().padStart(2, '0'));
+                          }}
+                        >
+                          <Text style={[styles.adjustBtnText, { color: theme.text }]}>-</Text>
+                        </TouchableOpacity>
+                        <Text style={{ width: 22, textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: theme.text }}>{reminderMinute}</Text>
+                        <TouchableOpacity 
+                          style={styles.adjustBtn} 
+                          onPress={() => {
+                            let min = parseInt(reminderMinute) || 0;
+                            min = min === 45 ? 0 : min + 15;
+                            setReminderMinute(min.toString().padStart(2, '0'));
+                          }}
+                        >
+                          <Text style={[styles.adjustBtnText, { color: theme.text }]}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                      
+                      <TouchableOpacity 
+                        style={[styles.ampmBtn, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, marginLeft: 2 }]} 
+                        onPress={() => setReminderAmPm(prev => prev === 'AM' ? 'PM' : 'AM')}
+                      >
+                        <Text style={[styles.ampmBtnText, { color: darkMode ? '#818CF8' : '#4F46E5', fontSize: 11, fontWeight: 'bold' }]}>{reminderAmPm}</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 </View>
+              )}
 
-                {/* Time Selector Widget */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={{ fontSize: 11, color: theme.textMuted }}>Time:</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.inputBg, borderWidth: 1, borderColor: theme.inputBorder, borderRadius: 8, padding: 2 }}>
-                    <TouchableOpacity 
-                      style={styles.adjustBtn} 
-                      onPress={() => {
-                        let h = parseInt(reminderHour) || 12;
-                        h = h === 1 ? 12 : h - 1;
-                        setReminderHour(h.toString().padStart(2, '0'));
-                      }}
-                    >
-                      <Text style={[styles.adjustBtnText, { color: theme.text }]}>-</Text>
-                    </TouchableOpacity>
-                    <Text style={{ width: 22, textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: theme.text }}>{reminderHour}</Text>
-                    <TouchableOpacity 
-                      style={styles.adjustBtn} 
-                      onPress={() => {
-                        let h = parseInt(reminderHour) || 12;
-                        h = h === 12 ? 1 : h + 1;
-                        setReminderHour(h.toString().padStart(2, '0'));
-                      }}
-                    >
-                      <Text style={[styles.adjustBtnText, { color: theme.text }]}>+</Text>
-                    </TouchableOpacity>
-                  </View>
-                  
-                  <Text style={{ color: theme.textMuted, fontSize: 12 }}>:</Text>
-                  
-                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.inputBg, borderWidth: 1, borderColor: theme.inputBorder, borderRadius: 8, padding: 2 }}>
-                    <TouchableOpacity 
-                      style={styles.adjustBtn} 
-                      onPress={() => {
-                        let min = parseInt(reminderMinute) || 0;
-                        min = min === 0 ? 45 : min - 15;
-                        setReminderMinute(min.toString().padStart(2, '0'));
-                      }}
-                    >
-                      <Text style={[styles.adjustBtnText, { color: theme.text }]}>-</Text>
-                    </TouchableOpacity>
-                    <Text style={{ width: 22, textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: theme.text }}>{reminderMinute}</Text>
-                    <TouchableOpacity 
-                      style={styles.adjustBtn} 
-                      onPress={() => {
-                        let min = parseInt(reminderMinute) || 0;
-                        min = min === 45 ? 0 : min + 15;
-                        setReminderMinute(min.toString().padStart(2, '0'));
-                      }}
-                    >
-                      <Text style={[styles.adjustBtnText, { color: theme.text }]}>+</Text>
-                    </TouchableOpacity>
-                  </View>
-                  
-                  <TouchableOpacity 
-                    style={[styles.ampmBtn, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, marginLeft: 2 }]} 
-                    onPress={() => setReminderAmPm(prev => prev === 'AM' ? 'PM' : 'AM')}
+              {/* Qualify / Disqualify Section */}
+              <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: darkMode ? '#334155' : '#E2E8F0', paddingTop: 12 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: darkMode ? '#94A3B8' : '#64748B', letterSpacing: 0.5, marginBottom: 8, textTransform: 'uppercase' }}>Lead Outcome</Text>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      backgroundColor: darkMode ? 'rgba(16, 185, 129, 0.12)' : '#ECFDF5',
+                      borderColor: darkMode ? 'rgba(16, 185, 129, 0.3)' : '#A7F3D0',
+                      borderWidth: 1,
+                      borderRadius: 12,
+                      paddingVertical: 10,
+                      alignItems: 'center',
+                      flexDirection: 'row',
+                      justifyContent: 'center',
+                      gap: 6
+                    }}
+                    onPress={handleQualifyLead}
                   >
-                    <Text style={[styles.ampmBtnText, { color: darkMode ? '#818CF8' : '#4F46E5', fontSize: 11, fontWeight: 'bold' }]}>{reminderAmPm}</Text>
+                    <Check size={14} color={darkMode ? '#6EE7B7' : '#047857'} />
+                    <Text style={{ color: darkMode ? '#6EE7B7' : '#047857', fontWeight: '700', fontSize: 12, letterSpacing: 0.3 }}>Qualify</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      backgroundColor: darkMode ? 'rgba(239, 68, 68, 0.12)' : '#FEF2F2',
+                      borderColor: darkMode ? 'rgba(239, 68, 68, 0.3)' : '#FCA5A5',
+                      borderWidth: 1,
+                      borderRadius: 12,
+                      paddingVertical: 10,
+                      alignItems: 'center',
+                      flexDirection: 'row',
+                      justifyContent: 'center',
+                      gap: 6
+                    }}
+                    onPress={() => {
+                      setIsDisqualifySheetOpen(true);
+                      setDisqualifyReason('');
+                    }}
+                  >
+                    <Slash size={12} color={darkMode ? '#F87171' : '#B91C1C'} />
+                    <Text style={{ color: darkMode ? '#F87171' : '#B91C1C', fontWeight: '700', fontSize: 12, letterSpacing: 0.3 }}>Disqualify</Text>
                   </TouchableOpacity>
                 </View>
               </View>
-            </View>
-          )}
 
-          {/* Qualify / Disqualify Section */}
-          <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: darkMode ? '#334155' : '#E2E8F0', paddingTop: 12 }}>
-            <Text style={{ fontSize: 11, fontWeight: '700', color: darkMode ? '#94A3B8' : '#64748B', letterSpacing: 0.5, marginBottom: 8, textTransform: 'uppercase' }}>Lead Outcome</Text>
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <TouchableOpacity
-                style={{
-                  flex: 1,
-                  backgroundColor: darkMode ? 'rgba(16, 185, 129, 0.12)' : '#ECFDF5',
-                  borderColor: darkMode ? 'rgba(16, 185, 129, 0.3)' : '#A7F3D0',
-                  borderWidth: 1,
-                  borderRadius: 12,
-                  paddingVertical: 10,
-                  alignItems: 'center',
-                  flexDirection: 'row',
-                  justifyContent: 'center',
-                  gap: 6
-                }}
-                onPress={handleQualifyLead}
-              >
-                <Check size={14} color={darkMode ? '#6EE7B7' : '#047857'} />
-                <Text style={{ color: darkMode ? '#6EE7B7' : '#047857', fontWeight: '700', fontSize: 12, letterSpacing: 0.3 }}>Qualify</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={{
-                  flex: 1,
-                  backgroundColor: darkMode ? 'rgba(239, 68, 68, 0.12)' : '#FEF2F2',
-                  borderColor: darkMode ? 'rgba(239, 68, 68, 0.3)' : '#FCA5A5',
-                  borderWidth: 1,
-                  borderRadius: 12,
-                  paddingVertical: 10,
-                  alignItems: 'center',
-                  flexDirection: 'row',
-                  justifyContent: 'center',
-                  gap: 6
-                }}
-                onPress={() => {
-                  setIsDisqualifySheetOpen(true);
-                  setDisqualifyReason('');
-                }}
-              >
-                <Slash size={12} color={darkMode ? '#F87171' : '#B91C1C'} />
-                <Text style={{ color: darkMode ? '#F87171' : '#B91C1C', fontWeight: '700', fontSize: 12, letterSpacing: 0.3 }}>Disqualify</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+              {/* Disqualify Reason Sheet */}
+              {isDisqualifySheetOpen && (
+                <View style={{ marginTop: 12, backgroundColor: darkMode ? '#1E293B' : '#F8FAFC', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: darkMode ? '#475569' : '#E2E8F0' }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: darkMode ? '#E2E8F0' : '#0F172A', marginBottom: 10 }}>Select Disqualify Reason</Text>
+                  {DISQUALIFY_REASONS.map(reason => (
+                    <TouchableOpacity
+                      key={reason}
+                      style={{
+                        paddingVertical: 10,
+                        paddingHorizontal: 12,
+                        borderRadius: 10,
+                        marginBottom: 6,
+                        backgroundColor: disqualifyReason === reason
+                          ? '#EF4444'
+                          : (darkMode ? '#0F172A' : '#FFF'),
+                        borderWidth: 1,
+                        borderColor: disqualifyReason === reason ? '#EF4444' : (darkMode ? '#334155' : '#E2E8F0')
+                      }}
+                      onPress={() => setDisqualifyReason(reason)}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: disqualifyReason === reason ? '700' : '500', color: disqualifyReason === reason ? '#FFF' : (darkMode ? '#E2E8F0' : '#0F172A') }}>
+                        {reason}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 6 }}>
+                    <TouchableOpacity
+                      style={{ flex: 1, paddingVertical: 10, borderRadius: 10, backgroundColor: darkMode ? '#334155' : '#E2E8F0', alignItems: 'center' }}
+                      onPress={() => { setIsDisqualifySheetOpen(false); setDisqualifyReason(''); }}
+                    >
+                      <Text style={{ color: darkMode ? '#94A3B8' : '#64748B', fontSize: 12, fontWeight: '600' }}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[{ flex: 2, paddingVertical: 10, borderRadius: 10, alignItems: 'center' }, disqualifyReason ? { backgroundColor: '#EF4444' } : { backgroundColor: '#94A3B8' }]}
+                      disabled={!disqualifyReason}
+                      onPress={() => disqualifyReason && handleDisqualifyLead(disqualifyReason)}
+                    >
+                      <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '700' }}>Confirm Disqualify</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
 
-          {/* Disqualify Reason Sheet */}
-          {isDisqualifySheetOpen && (
-            <View style={{ marginTop: 12, backgroundColor: darkMode ? '#1E293B' : '#F8FAFC', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: darkMode ? '#475569' : '#E2E8F0' }}>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: darkMode ? '#E2E8F0' : '#0F172A', marginBottom: 10 }}>Select Disqualify Reason</Text>
-              {DISQUALIFY_REASONS.map(reason => (
-                <TouchableOpacity
-                  key={reason}
-                  style={{
-                    paddingVertical: 10,
-                    paddingHorizontal: 12,
-                    borderRadius: 10,
-                    marginBottom: 6,
-                    backgroundColor: disqualifyReason === reason
-                      ? '#EF4444'
-                      : (darkMode ? '#0F172A' : '#FFF'),
-                    borderWidth: 1,
-                    borderColor: disqualifyReason === reason ? '#EF4444' : (darkMode ? '#334155' : '#E2E8F0')
+              <View style={[styles.modalActionsRow, { marginTop: 16 }]}>
+                <TouchableOpacity 
+                  style={styles.cancelModalBtn} 
+                  onPress={() => {
+                    setFeedbackLead(null);
+                    setIsDisqualifySheetOpen(false);
+                    setDisqualifyReason('');
                   }}
-                  onPress={() => setDisqualifyReason(reason)}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: disqualifyReason === reason ? '700' : '500', color: disqualifyReason === reason ? '#FFF' : (darkMode ? '#E2E8F0' : '#0F172A') }}>
-                    {reason}
-                  </Text>
+                  <Text style={styles.cancelModalBtnText}>Skip / Dismiss</Text>
                 </TouchableOpacity>
-              ))}
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 6 }}>
-                <TouchableOpacity
-                  style={{ flex: 1, paddingVertical: 10, borderRadius: 10, backgroundColor: darkMode ? '#334155' : '#E2E8F0', alignItems: 'center' }}
-                  onPress={() => { setIsDisqualifySheetOpen(false); setDisqualifyReason(''); }}
+                <TouchableOpacity 
+                  style={styles.saveFeedbackBtn} 
+                  onPress={handleSaveFeedback}
                 >
-                  <Text style={{ color: darkMode ? '#94A3B8' : '#64748B', fontSize: 12, fontWeight: '600' }}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[{ flex: 2, paddingVertical: 10, borderRadius: 10, alignItems: 'center' }, disqualifyReason ? { backgroundColor: '#EF4444' } : { backgroundColor: '#94A3B8' }]}
-                  disabled={!disqualifyReason}
-                  onPress={() => disqualifyReason && handleDisqualifyLead(disqualifyReason)}
-                >
-                  <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '700' }}>Confirm Disqualify</Text>
+                  <Text style={styles.saveFeedbackBtnText}>Save Follow-up</Text>
                 </TouchableOpacity>
               </View>
-            </View>
-          )}
-
-          <View style={styles.modalActionsRow}>
-            <TouchableOpacity 
-              style={styles.cancelModalBtn} 
-              onPress={() => {
-                setFeedbackLead(null);
-                setIsDisqualifySheetOpen(false);
-                setDisqualifyReason('');
-              }}
-            >
-              <Text style={styles.cancelModalBtnText}>Skip / Dismiss</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={styles.saveFeedbackBtn} 
-              onPress={handleSaveFeedback}
-            >
-              <Text style={styles.saveFeedbackBtnText}>Save Follow-up</Text>
-            </TouchableOpacity>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </View>
     );
   };
@@ -3539,8 +3550,13 @@ export default function App() {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
         <StatusBar barStyle={darkMode ? "light-content" : "dark-content"} />
-        {/* Detail Header */}
-        <View style={[styles.detailHeader, { backgroundColor: theme.headerBg, borderBottomColor: theme.border }]}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        >
+          {/* Detail Header */}
+          <View style={[styles.detailHeader, { backgroundColor: theme.headerBg, borderBottomColor: theme.border }]}>
           <TouchableOpacity 
             onPress={() => setCurrentScreen(prevScreen)}
             style={[styles.backBtn, { backgroundColor: darkMode ? '#334155' : '#F1F5F9', paddingHorizontal: 10, paddingVertical: 6 }]}
@@ -4249,10 +4265,11 @@ export default function App() {
             </View>
           )}
         </ScrollView>
-        {renderFeedbackModal()}
-        {renderPickerModal()}
-        {renderWhatsAppModal()}
-      </SafeAreaView>
+      </KeyboardAvoidingView>
+      {renderFeedbackModal()}
+      {renderPickerModal()}
+      {renderWhatsAppModal()}
+    </SafeAreaView>
     );
   }
 
@@ -4806,60 +4823,65 @@ export default function App() {
       {/* Manual Entry Form Popup Modal Overlay */}
       {isAddModalOpen && (
         <View style={styles.feedbackModalOverlay}>
-          <View style={[styles.feedbackModalContent, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
-            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-              <Text style={[styles.feedbackTitle, { color: theme.text }]}>Add Candidate Lead</Text>
-              
-              <TextInput 
-                placeholder="Student Name *" 
-                placeholderTextColor="#94A3B8"
-                value={newLeadName} 
-                onChangeText={setNewLeadName} 
-                style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder, marginBottom: 12 }]} 
-              />
-              <TextInput 
-                placeholder="Phone Number *" 
-                placeholderTextColor="#94A3B8"
-                value={newLeadPhone} 
-                onChangeText={setNewLeadPhone} 
-                keyboardType="phone-pad" 
-                style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder, marginBottom: 12 }]} 
-              />
-              <TextInput 
-                placeholder="NEET Marks (720 max)" 
-                placeholderTextColor="#94A3B8"
-                value={newLeadNeet} 
-                onChangeText={setNewLeadNeet} 
-                keyboardType="number-pad" 
-                style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder, marginBottom: 12 }]} 
-              />
-              <TextInput 
-                placeholder="Budget (Lakhs INR)" 
-                placeholderTextColor="#94A3B8"
-                value={newLeadBudget} 
-                onChangeText={setNewLeadBudget} 
-                keyboardType="number-pad" 
-                style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder, marginBottom: 12 }]} 
-              />
-              <TextInput 
-                placeholder="Target Destination (Country/State)" 
-                placeholderTextColor="#94A3B8"
-                value={newLeadDest} 
-                onChangeText={setNewLeadDest} 
-                style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder, marginBottom: 16 }]} 
-              />
-              
-              <TouchableOpacity style={styles.submitLeadBtn} onPress={handleAddLead}>
-                <Text style={styles.submitLeadBtnText}>Save Candidate Profile</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.cancelModalBtn, { marginTop: 10 }]} 
-                onPress={() => setIsAddModalOpen(false)}
-              >
-                <Text style={[styles.cancelModalBtnText, { color: theme.textMuted, textAlign: 'center' }]}>Cancel</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
+          <KeyboardAvoidingView 
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={{ width: '100%', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <View style={[styles.feedbackModalContent, { backgroundColor: theme.cardBg, borderColor: theme.border, maxHeight: '85%' }]}>
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                <Text style={[styles.feedbackTitle, { color: theme.text }]}>Add Candidate Lead</Text>
+                
+                <TextInput 
+                  placeholder="Student Name *" 
+                  placeholderTextColor="#94A3B8"
+                  value={newLeadName} 
+                  onChangeText={setNewLeadName} 
+                  style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder, marginBottom: 12 }]} 
+                />
+                <TextInput 
+                  placeholder="Phone Number *" 
+                  placeholderTextColor="#94A3B8"
+                  value={newLeadPhone} 
+                  onChangeText={setNewLeadPhone} 
+                  keyboardType="phone-pad" 
+                  style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder, marginBottom: 12 }]} 
+                />
+                <TextInput 
+                  placeholder="NEET Marks (720 max)" 
+                  placeholderTextColor="#94A3B8"
+                  value={newLeadNeet} 
+                  onChangeText={setNewLeadNeet} 
+                  keyboardType="number-pad" 
+                  style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder, marginBottom: 12 }]} 
+                />
+                <TextInput 
+                  placeholder="Budget (Lakhs INR)" 
+                  placeholderTextColor="#94A3B8"
+                  value={newLeadBudget} 
+                  onChangeText={setNewLeadBudget} 
+                  keyboardType="number-pad" 
+                  style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder, marginBottom: 12 }]} 
+                />
+                <TextInput 
+                  placeholder="Target Destination (Country/State)" 
+                  placeholderTextColor="#94A3B8"
+                  value={newLeadDest} 
+                  onChangeText={setNewLeadDest} 
+                  style={[styles.formInputInline, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder, marginBottom: 16 }]} 
+                />
+                
+                <TouchableOpacity style={styles.submitLeadBtn} onPress={handleAddLead}>
+                  <Text style={styles.submitLeadBtnText}>Save Candidate Profile</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.cancelModalBtn, { marginTop: 10 }]} 
+                  onPress={() => setIsAddModalOpen(false)}
+                >
+                  <Text style={[styles.cancelModalBtnText, { color: theme.textMuted, textAlign: 'center' }]}>Cancel</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </KeyboardAvoidingView>
         </View>
       )}
 
