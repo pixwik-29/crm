@@ -2,7 +2,7 @@
   "expo": {
     "name": "PS-CRM",
     "slug": "crm",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "runtimeVersion": {
       "policy": "appVersion"
@@ -26,6 +26,7 @@
     "ios": {
       "icon": "./assets/ps_crm_app_icon.png",
       "bundleIdentifier": "com.perfectscholar.crm",
+      "buildNumber": "16",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -36,7 +37,7 @@
     "android": {
       "package": "com.perfectscholar.crm",
       "googleServicesFile": "./google-services.json",
-      "versionCode": 13,
+      "versionCode": 16,
       "icon": "./assets/ps_crm_app_icon.png",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -81,7 +82,16 @@
           "microphonePermission": false
         }
       ],
-      "expo-updates"
+      "expo-updates",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/ps_crm_notification_icon.png",
+          "color": "#0078D4",
+          "defaultChannel": "default",
+          "sounds": []
+        }
+      ]
     ]
   }
 }

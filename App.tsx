@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  StyleSheet, Text, View, ScrollView, TextInput, TouchableOpacity, 
+  StyleSheet, Text, View, ScrollView, FlatList, TextInput, TouchableOpacity, 
   SafeAreaView, StatusBar, ActivityIndicator, Alert, Linking, Share, Image, Platform, Clipboard, BackHandler,
   KeyboardAvoidingView, AppState, LayoutAnimation, UIManager
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { 
-  Phone, MessageSquare, Mail, Tag, ArrowLeft, Award, User, Clock, Search, Users,
+  Phone, MessageSquare, MessageCircle, Mail, Tag, ArrowLeft, Award, User, Clock, Search, Users,
   Plus, Check, LogOut, ArrowRight, Eye, Shield, Bell, PlusCircle, CheckCircle, Smartphone, Settings,
-  FileText, Upload, Camera, Plane, CheckSquare, Square
+  FileText, Upload, Camera, Plane, CheckSquare, Square, X, Slash, SlidersHorizontal, ArrowUpDown, ChevronDown
 } from 'lucide-react-native';
 import { createClient } from '@supabase/supabase-js';
 import * as Device from 'expo-device';
@@ -20,8 +20,10 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as Updates from 'expo-updates';
 import { CSVImportModalMobile } from './components/CSVImportModalMobile';
 
-const isExpoGo = Constants.appOwnership === 'expo' || Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
-const Notifications = isExpoGo ? null : require('expo-notifications');
+// Only true Expo Go app has appOwnership === 'expo'.
+// StoreClient means a standalone/sideloaded APK — push notifications ARE supported there.
+const isExpoGo = Constants.appOwnership === 'expo';
+const Notifications = Platform.OS === 'web' ? null : require('expo-notifications');
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -55,8 +57,8 @@ if (Notifications) {
 async function registerForPushNotificationsAsync() {
   if (Platform.OS === 'web') return null;
 
-  if (isExpoGo || !Notifications) {
-    console.log('Skipping Push Token generation inside Expo Go to prevent runtime crash.');
+  if (!Notifications) {
+    console.log('Push notifications library not loaded.');
     return null;
   }
   
@@ -439,14 +441,19 @@ export default function App() {
   const [inboxMessageInput, setInboxMessageInput] = useState('');
   const [lastSeenMap, setLastSeenMap] = useState<Record<string, string>>({});
   const [showHeaderFilters, setShowHeaderFilters] = useState(true);
+  const [showAppHeader, setShowAppHeader] = useState(true);
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
+  const [showSortPanel, setShowSortPanel] = useState(false);
+  const [sortOption, setSortOption] = useState<'newest' | 'oldest' | 'name_az' | 'name_za' | 'score_desc'>('newest');
   const lastScrollY = useRef(0);
+  const flatListRef = useRef<FlatList>(null);
   const [prevScreen, setPrevScreen] = useState<'dashboard' | 'tasksList'>('dashboard');
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   
   // Modals / Input Toggles
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [detailTab, setDetailTab] = useState<'notes' | 'tasks' | 'chat' | 'checklist'>('notes');
+  const [detailTab, setDetailTab] = useState<'notes' | 'tasks' | 'checklist'>('notes');
 
   // Pipelines & Partner portal integration states
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
@@ -470,6 +477,8 @@ export default function App() {
   // Qualify / Disqualify states
   const [isDisqualifySheetOpen, setIsDisqualifySheetOpen] = useState(false);
   const [disqualifyReason, setDisqualifyReason] = useState('');
+  const [isDetailDisqualifyOpen, setIsDetailDisqualifyOpen] = useState(false);
+  const [detailDisqualifyReason, setDetailDisqualifyReason] = useState('');
   
   // Task Due Date/Time States
   const [taskDate, setTaskDate] = useState('');
@@ -493,11 +502,12 @@ export default function App() {
   const [noteText, setNoteText] = useState('');
   const [taskText, setTaskText] = useState('');
   const [chatInput, setChatInput] = useState('');
-  const [chatHistory, setChatHistory] = useState<{ id: string; lead_id: string; direction: 'in' | 'out'; text: string; time: string; rawTime?: string }[]>([]);
+  const [chatHistory, setChatHistory] = useState<{ id: string; lead_id: string; direction: 'in' | 'out'; text: string; time: string; rawTime?: string; status?: string }[]>([]);
 
   // Search State
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStageFilter, setSelectedStageFilter] = useState<string>('All');
+  const [selectedSourceFilter, setSelectedSourceFilter] = useState<string>('All');
 
   // Settings States
   const [darkMode, setDarkMode] = useState(false);
@@ -582,10 +592,16 @@ export default function App() {
         direction: c.direction === 'incoming' ? ('in' as const) : ('out' as const),
         text: c.message_text,
         time: new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        rawTime: c.created_at
+        rawTime: c.created_at,
+        status: c.status
       }));
-      setChatHistory(remappedChat);
-      await AsyncStorage.setItem('m_chat', JSON.stringify(remappedChat));
+
+      // Secure client-side isolation: Only keep chats belonging to leads this user is authorized to see
+      const accessibleLeadIds = new Set((leadsData || []).map(l => l.id));
+      const filteredChat = remappedChat.filter(c => accessibleLeadIds.has(c.lead_id));
+      
+      setChatHistory(filteredChat);
+      await AsyncStorage.setItem('m_chat', JSON.stringify(filteredChat));
 
 
       // 7. Fetch Visa Applications
@@ -908,10 +924,16 @@ export default function App() {
           direction: c.direction === 'incoming' ? ('in' as const) : ('out' as const),
           text: c.message_text,
           time: new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          rawTime: c.created_at
+          rawTime: c.created_at,
+          status: c.status
         }));
-        setChatHistory(remappedChat);
-        await AsyncStorage.setItem('m_chat', JSON.stringify(remappedChat));
+        
+        // Secure client-side isolation: Only keep chats belonging to leads this user is authorized to see
+        const accessibleLeadIds = new Set(leads.map(l => l.id));
+        const filteredChat = remappedChat.filter(c => accessibleLeadIds.has(c.lead_id));
+        
+        setChatHistory(filteredChat);
+        await AsyncStorage.setItem('m_chat', JSON.stringify(filteredChat));
       }
     } catch (e) {
       console.error("Error auto-refreshing chats:", e);
@@ -959,8 +981,6 @@ export default function App() {
     
     if (dashboardTab === 'inbox' && selectedInboxLeadId) {
       targetLeadId = selectedInboxLeadId;
-    } else if (currentScreen === 'detail' && selectedLead && detailTab === 'chat') {
-      targetLeadId = selectedLead.id;
     }
 
     if (targetLeadId) {
@@ -970,6 +990,21 @@ export default function App() {
       const latestMsgTime = leadMsgs.length > 0 
         ? Math.max(...leadMsgs.map(m => m.rawTime ? new Date(m.rawTime).getTime() : 0)) 
         : 0;
+
+      // Update in Supabase: mark all unread incoming messages for this lead as read
+      const markAsRead = async () => {
+        try {
+          await supabase
+            .from('whatsapp_history')
+            .update({ status: 'read' })
+            .eq('lead_id', targetLeadId)
+            .eq('direction', 'incoming')
+            .eq('status', 'unread');
+        } catch (err: any) {
+          console.error('[Inbox Mobile] Failed to mark as read:', err.message);
+        }
+      };
+      markAsRead();
 
       if (!lastSeen || new Date(lastSeen).getTime() < latestMsgTime) {
         const updatedMap = { ...lastSeenMap, [targetLeadId]: now };
@@ -1020,6 +1055,29 @@ export default function App() {
 
     return () => backHandler.remove();
   }, [currentScreen, isSettingsOpen, activeWhatsAppLead, feedbackLead, isAddModalOpen, isVisaScreenOpen]);
+
+  // Preserve and restore FlatList scroll position when navigating back to the dashboard
+  useEffect(() => {
+    if (currentScreen === 'dashboard') {
+      // Restore header visibility when coming back to the home screen
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setShowAppHeader(true);
+      setShowHeaderFilters(true);
+
+      if (flatListRef.current && lastScrollY.current > 0) {
+        const savedOffset = lastScrollY.current;
+        const timer = setTimeout(() => {
+          flatListRef.current?.scrollToOffset({ offset: savedOffset, animated: false });
+        }, 80);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [currentScreen]);
+
+  // Reset scroll offset on filter/search change
+  useEffect(() => {
+    lastScrollY.current = 0;
+  }, [selectedStageFilter, selectedSourceFilter, activeDashboardPipelineId, searchTerm]);
 
   // Reset/Initialize task due date/time defaults when a lead is selected
   useEffect(() => {
@@ -1385,15 +1443,28 @@ export default function App() {
     }
   };
 
-  // Sign out from Supabase Auth
-  const handleLogout = async () => {
-    try {
-      await supabase.auth.signOut();
-    } catch (e) {
-      console.error("Sign out error:", e);
-    }
-    setCurrentUser(null);
-    await AsyncStorage.removeItem('m_user');
+  // Sign out from Supabase Auth — with confirmation dialog
+  const handleLogout = () => {
+    Alert.alert(
+      'Confirm Logout',
+      'Are you sure you want to log out of Perfect Scholar CRM?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Logout',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await supabase.auth.signOut();
+            } catch (e) {
+              console.error('Sign out error:', e);
+            }
+            setCurrentUser(null);
+            await AsyncStorage.removeItem('m_user');
+          }
+        }
+      ]
+    );
   };
 
   const handleSaveSettings = async (
@@ -1860,6 +1931,60 @@ export default function App() {
       setFeedbackNotes('');
       setFeedbackReminder(false);
       Alert.alert('🚫 Disqualified', `${feedbackLead.name} has been marked as Disqualified.\nReason: ${reason}`);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to disqualify lead.');
+    }
+  };
+
+  const handleQualifySelectedLead = async () => {
+    if (!selectedLead) return;
+    try {
+      await supabase
+        .from('leads')
+        .update({ status: 'qualified', updated_at: new Date().toISOString() })
+        .eq('id', selectedLead.id);
+
+      await supabase.from('activity_logs').insert([{
+        lead_id: selectedLead.id,
+        actor_id: currentUser?.id,
+        action_type: 'lead_qualified',
+        description: 'Lead marked as Qualified from Notes tab',
+        tenant_id: currentUser?.tenant_id || 'default'
+      }]);
+
+      // Update local state
+      setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, status: 'qualified' } : l));
+      setSelectedLead(prev => prev ? { ...prev, status: 'qualified' } : null);
+
+      Alert.alert('✅ Qualified', `${selectedLead.name} has been marked as Qualified.`);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to qualify lead.');
+    }
+  };
+
+  const handleDisqualifySelectedLead = async (reason: string) => {
+    if (!selectedLead) return;
+    try {
+      await supabase
+        .from('leads')
+        .update({ status: 'disqualified', updated_at: new Date().toISOString() })
+        .eq('id', selectedLead.id);
+
+      await supabase.from('activity_logs').insert([{
+        lead_id: selectedLead.id,
+        actor_id: currentUser?.id,
+        action_type: 'lead_disqualified',
+        description: `Lead disqualified from Notes tab — Reason: ${reason}`,
+        tenant_id: currentUser?.tenant_id || 'default'
+      }]);
+
+      // Update local state
+      setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, status: 'disqualified' } : l));
+      setSelectedLead(prev => prev ? { ...prev, status: 'disqualified' } : null);
+
+      setIsDetailDisqualifyOpen(false);
+      setDetailDisqualifyReason('');
+      Alert.alert('🚫 Disqualified', `${selectedLead.name} has been marked as Disqualified.\nReason: ${reason}`);
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Failed to disqualify lead.');
     }
@@ -2665,7 +2790,9 @@ export default function App() {
               <TouchableOpacity
                 style={{
                   flex: 1,
-                  backgroundColor: '#10B981',
+                  backgroundColor: darkMode ? 'rgba(16, 185, 129, 0.12)' : '#ECFDF5',
+                  borderColor: darkMode ? 'rgba(16, 185, 129, 0.3)' : '#A7F3D0',
+                  borderWidth: 1,
                   borderRadius: 12,
                   paddingVertical: 10,
                   alignItems: 'center',
@@ -2675,13 +2802,15 @@ export default function App() {
                 }}
                 onPress={handleQualifyLead}
               >
-                <Text style={{ fontSize: 13, color: '#FFF' }}>✅</Text>
-                <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 13 }}>Qualify</Text>
+                <Check size={14} color={darkMode ? '#6EE7B7' : '#047857'} />
+                <Text style={{ color: darkMode ? '#6EE7B7' : '#047857', fontWeight: '700', fontSize: 12, letterSpacing: 0.3 }}>Qualify</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={{
                   flex: 1,
-                  backgroundColor: '#EF4444',
+                  backgroundColor: darkMode ? 'rgba(239, 68, 68, 0.12)' : '#FEF2F2',
+                  borderColor: darkMode ? 'rgba(239, 68, 68, 0.3)' : '#FCA5A5',
+                  borderWidth: 1,
                   borderRadius: 12,
                   paddingVertical: 10,
                   alignItems: 'center',
@@ -2694,8 +2823,8 @@ export default function App() {
                   setDisqualifyReason('');
                 }}
               >
-                <Text style={{ fontSize: 13, color: '#FFF' }}>🚫</Text>
-                <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 13 }}>Disqualify</Text>
+                <Slash size={12} color={darkMode ? '#F87171' : '#B91C1C'} />
+                <Text style={{ color: darkMode ? '#F87171' : '#B91C1C', fontWeight: '700', fontSize: 12, letterSpacing: 0.3 }}>Disqualify</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -2833,6 +2962,17 @@ export default function App() {
               </TouchableOpacity>
             </View>
 
+            {/* Logout Button */}
+            <TouchableOpacity 
+              style={{ borderColor: '#FEE2E2', borderWidth: 1, marginTop: 10, padding: 12, borderRadius: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }} 
+              onPress={() => {
+                setIsSettingsOpen(false);
+                handleLogout();
+              }}
+            >
+              <LogOut size={14} color="#EF4444" style={{ marginRight: 6 }} />
+              <Text style={{ color: '#EF4444', fontWeight: 'bold', fontSize: 13 }}>Log Out of Account</Text>
+            </TouchableOpacity>
 
           </ScrollView>
 
@@ -3029,7 +3169,7 @@ export default function App() {
               lead_id: selectedLead.id,
               direction: 'incoming',
               message_text: replyText,
-              status: 'read',
+              status: 'unread',
               tenant_id: currentUser?.tenant_id || 'default'
             }])
             .select()
@@ -3042,7 +3182,8 @@ export default function App() {
               direction: 'in' as const,
               text: botMsg.message_text,
               time: new Date(botMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              rawTime: botMsg.created_at
+              rawTime: botMsg.created_at,
+              status: botMsg.status
             };
             setChatHistory(prev => [...prev, remappedIncoming]);
             Alert.alert(`📱 New reply from ${selectedLead.name}`, "Check the WhatsApp chat log in details tab.");
@@ -3071,11 +3212,21 @@ export default function App() {
     return leadPipelineId === currentPipelineId;
   });
 
+  const leadSources = Array.from(new Set(myLeads.map(l => l.lead_source).filter(Boolean))) as string[];
+
   const filteredLeads = myLeads.filter(l => {
     const matchesSearch = l.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
       (l.preferred_destination && l.preferred_destination.toLowerCase().includes(searchTerm.toLowerCase()));
     const matchesStage = selectedStageFilter === 'All' || l.status === selectedStageFilter;
-    return matchesSearch && matchesStage;
+    const matchesSource = selectedSourceFilter === 'All' || l.lead_source === selectedSourceFilter;
+    return matchesSearch && matchesStage && matchesSource;
+  }).sort((a, b) => {
+    if (sortOption === 'newest') return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+    if (sortOption === 'oldest') return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+    if (sortOption === 'name_az') return a.name.localeCompare(b.name);
+    if (sortOption === 'name_za') return b.name.localeCompare(a.name);
+    if (sortOption === 'score_desc') return (b.score || 0) - (a.score || 0);
+    return 0;
   });
 
   const theme = {
@@ -3396,7 +3547,12 @@ export default function App() {
           >
             <ArrowLeft size={18} color={theme.text} />
           </TouchableOpacity>
-          <Text style={[styles.detailHeaderTitle, { color: theme.text }]} numberOfLines={1}>{selectedLead.name}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 10 }}>
+            {selectedLead.status.toLowerCase() === 'contacted' && (
+              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#10B981', alignSelf: 'center' }} />
+            )}
+            <Text style={[styles.detailHeaderTitle, { color: theme.text, flex: 1 }]} numberOfLines={1}>{selectedLead.name}</Text>
+          </View>
           <View style={styles.scoreCircle}>
             <Text style={styles.scoreCircleText}>{selectedLead.score}</Text>
           </View>
@@ -3507,34 +3663,44 @@ export default function App() {
           )}
 
           {/* Quick Contact Buttons */}
-          <View style={styles.actionsBarRow}>
+          <View style={[styles.actionsBarRow, { paddingHorizontal: 4 }]}>
             <TouchableOpacity 
-              style={[styles.actionButton, { backgroundColor: '#3B82F6' }]}
-              onPress={() => triggerCall(selectedLead)}
+              style={[
+                styles.actionButton, 
+                { 
+                  backgroundColor: darkMode ? 'rgba(16, 185, 129, 0.12)' : '#ECFDF5',
+                  borderColor: darkMode ? 'rgba(16, 185, 129, 0.3)' : '#A7F3D0',
+                  borderWidth: 1
+                }
+              ]}
+              onPress={() => triggerWhatsApp(selectedLead)}
             >
-              <Phone size={18} color="#FFF" />
-              <Text style={styles.actionButtonText}>Call Candidate</Text>
+              <Image 
+                source={require('./assets/whatsapp_logo.png')} 
+                style={{ width: 16, height: 16, tintColor: darkMode ? '#6EE7B7' : '#059669', marginRight: 4 }} 
+              />
+              <Text style={[styles.actionButtonText, { color: darkMode ? '#6EE7B7' : '#059669' }]}>WhatsApp</Text>
             </TouchableOpacity>
 
             <TouchableOpacity 
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 22,
-                backgroundColor: '#25D366',
-                justifyContent: 'center',
-                alignItems: 'center',
-                alignSelf: 'center'
-              }}
-              onPress={() => triggerWhatsApp(selectedLead)}
+              style={[
+                styles.actionButton, 
+                { 
+                  backgroundColor: darkMode ? 'rgba(59, 130, 246, 0.12)' : '#EFF6FF',
+                  borderColor: darkMode ? 'rgba(59, 130, 246, 0.3)' : '#BFDBFE',
+                  borderWidth: 1
+                }
+              ]}
+              onPress={() => triggerCall(selectedLead)}
             >
-              <MessageSquare size={18} color="#FFF" />
+              <Phone size={16} color={darkMode ? '#93C5FD' : '#2563EB'} />
+              <Text style={[styles.actionButtonText, { color: darkMode ? '#93C5FD' : '#2563EB' }]}>Call Candidate</Text>
             </TouchableOpacity>
           </View>
 
           {/* TABS Toggles */}
           <View style={[styles.tabsRow, { borderBottomColor: theme.border }]}>
-            {(['notes', 'tasks', 'chat', 'checklist'] as const).map(tab => (
+            {(['notes', 'tasks', 'checklist'] as const).map(tab => (
               <TouchableOpacity
                 key={tab}
                 style={[styles.tabBtn, detailTab === tab && styles.tabBtnActive]}
@@ -3561,6 +3727,95 @@ export default function App() {
                 <TouchableOpacity style={styles.formSubmitBtn} onPress={handleAddNote}>
                   <Text style={styles.formSubmitBtnText}>POST</Text>
                 </TouchableOpacity>
+              </View>
+
+              {/* Qualify / Disqualify Section */}
+              <View style={{ marginTop: 12, borderBottomWidth: 1, borderBottomColor: theme.border, paddingBottom: 16, marginBottom: 12 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: theme.textMuted, letterSpacing: 0.5, marginBottom: 8, textTransform: 'uppercase' }}>Lead Outcome</Text>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      backgroundColor: darkMode ? 'rgba(16, 185, 129, 0.12)' : '#ECFDF5',
+                      borderColor: darkMode ? 'rgba(16, 185, 129, 0.3)' : '#A7F3D0',
+                      borderWidth: 1,
+                      borderRadius: 12,
+                      paddingVertical: 10,
+                      alignItems: 'center',
+                      flexDirection: 'row',
+                      justifyContent: 'center',
+                      gap: 6
+                    }}
+                    onPress={handleQualifySelectedLead}
+                  >
+                    <Check size={14} color={darkMode ? '#6EE7B7' : '#047857'} />
+                    <Text style={{ color: darkMode ? '#6EE7B7' : '#047857', fontWeight: '700', fontSize: 12, letterSpacing: 0.3 }}>Qualify</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      backgroundColor: darkMode ? 'rgba(239, 68, 68, 0.12)' : '#FEF2F2',
+                      borderColor: darkMode ? 'rgba(239, 68, 68, 0.3)' : '#FCA5A5',
+                      borderWidth: 1,
+                      borderRadius: 12,
+                      paddingVertical: 10,
+                      alignItems: 'center',
+                      flexDirection: 'row',
+                      justifyContent: 'center',
+                      gap: 6
+                    }}
+                    onPress={() => {
+                      setIsDetailDisqualifyOpen(true);
+                      setDetailDisqualifyReason('');
+                    }}
+                  >
+                    <Slash size={12} color={darkMode ? '#F87171' : '#B91C1C'} />
+                    <Text style={{ color: darkMode ? '#F87171' : '#B91C1C', fontWeight: '700', fontSize: 12, letterSpacing: 0.3 }}>Disqualify</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Disqualify Reason Selector for Details Notes tab */}
+                {isDetailDisqualifyOpen && (
+                  <View style={{ marginTop: 12, backgroundColor: darkMode ? '#1E293B' : '#F8FAFC', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: darkMode ? '#475569' : '#E2E8F0' }}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: darkMode ? '#E2E8F0' : '#0F172A', marginBottom: 10 }}>Select Disqualify Reason</Text>
+                    {DISQUALIFY_REASONS.map(reason => (
+                      <TouchableOpacity
+                        key={reason}
+                        style={{
+                          paddingVertical: 10,
+                          paddingHorizontal: 12,
+                          borderRadius: 10,
+                          marginBottom: 6,
+                          backgroundColor: detailDisqualifyReason === reason
+                            ? '#EF4444'
+                            : (darkMode ? '#0F172A' : '#FFF'),
+                          borderWidth: 1,
+                          borderColor: detailDisqualifyReason === reason ? '#EF4444' : (darkMode ? '#334155' : '#E2E8F0')
+                        }}
+                        onPress={() => setDetailDisqualifyReason(reason)}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: detailDisqualifyReason === reason ? '700' : '500', color: detailDisqualifyReason === reason ? '#FFF' : (darkMode ? '#E2E8F0' : '#0F172A') }}>
+                          {reason}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                    <View style={{ flexDirection: 'row', gap: 10, marginTop: 6 }}>
+                      <TouchableOpacity
+                        style={{ flex: 1, paddingVertical: 10, borderRadius: 10, backgroundColor: darkMode ? '#334155' : '#E2E8F0', alignItems: 'center' }}
+                        onPress={() => { setIsDetailDisqualifyOpen(false); setDetailDisqualifyReason(''); }}
+                      >
+                        <Text style={{ color: darkMode ? '#94A3B8' : '#64748B', fontSize: 12, fontWeight: '600' }}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[{ flex: 2, paddingVertical: 10, borderRadius: 10, alignItems: 'center' }, detailDisqualifyReason ? { backgroundColor: '#EF4444' } : { backgroundColor: '#94A3B8' }]}
+                        disabled={!detailDisqualifyReason}
+                        onPress={() => detailDisqualifyReason && handleDisqualifySelectedLead(detailDisqualifyReason)}
+                      >
+                        <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '700' }}>Confirm Disqualify</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
               </View>
 
               {leadNotes.length > 0 ? (
@@ -3796,46 +4051,7 @@ export default function App() {
             </View>
           )}
 
-          {/* TAB CONTENTS: CHATS */}
-          {detailTab === 'chat' && (
-            <View style={styles.tabContentBox}>
-              <View style={[styles.chatHistoryWindow, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
-                {leadChats.length > 0 ? (
-                  leadChats.map(c => (
-                    <View 
-                      key={c.id} 
-                      style={[
-                        styles.chatBubble, 
-                        c.direction === 'out' ? styles.chatBubbleOut : [styles.chatBubbleIn, { backgroundColor: darkMode ? '#334155' : '#F1F5F9' }]
-                      ]}
-                    >
-                      <Text style={[
-                        styles.chatBubbleText, 
-                        c.direction === 'out' ? styles.chatTextOut : [styles.chatTextIn, { color: theme.text }]
-                      ]}>
-                        {c.text}
-                      </Text>
-                    </View>
-                  ))
-                ) : (
-                  <Text style={[styles.emptyText, { color: theme.textMuted }]}>No WhatsApp chat transcripts recorded</Text>
-                )}
-              </View>
 
-              <View style={styles.inputFormBox}>
-                <TextInput
-                  placeholder="Send simulated reply message..."
-                  placeholderTextColor="#94A3B8"
-                  value={chatInput}
-                  onChangeText={setChatInput}
-                  style={[styles.formInputText, { backgroundColor: theme.inputBg, color: theme.inputText, borderColor: theme.inputBorder }]}
-                />
-                <TouchableOpacity style={styles.chatSendBtn} onPress={handleSendWhatsAppSim}>
-                  <Text style={styles.formSubmitBtnText}>SEND</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
 
           {/* TAB CONTENTS: CHECKLIST */}
           {detailTab === 'checklist' && (
@@ -4139,7 +4355,7 @@ export default function App() {
               lead_id: lead.id,
               direction: 'incoming',
               message_text: replyText,
-              status: 'read',
+              status: 'unread',
               tenant_id: currentUser?.tenant_id || 'default'
             }])
             .select()
@@ -4152,7 +4368,8 @@ export default function App() {
               direction: 'in' as const,
               text: botMsg.message_text,
               time: new Date(botMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              rawTime: botMsg.created_at
+              rawTime: botMsg.created_at,
+              status: botMsg.status
             };
             setChatHistory(prev => [...prev, remappedIncoming]);
           }
@@ -4190,10 +4407,9 @@ export default function App() {
         const leadName = lead ? lead.name : 'Unknown Candidate';
         const phone = lead ? (lead.whatsapp_number || lead.phone) : 'N/A';
 
-        // Check if message is unread
-        const lastSeen = lastSeenMap[leadId] || '1970-01-01T00:00:00.000Z';
+        // Check if message is unread using database status column
         const isIncoming = msg.direction === 'in';
-        const isUnread = isIncoming && msg.rawTime && new Date(msg.rawTime).getTime() > new Date(lastSeen).getTime();
+        const isUnread = isIncoming && msg.status === 'unread';
 
         if (!threadMapLocal[leadId]) {
           threadMapLocal[leadId] = {
@@ -4347,8 +4563,9 @@ export default function App() {
 
     return (
       <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'padding'} 
         style={{ flex: 1, backgroundColor: theme.bg }}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 80}
       >
         {/* Conversation Header */}
         <View style={{
@@ -4506,16 +4723,25 @@ export default function App() {
 
   const handleScroll = (event: any) => {
     const currentY = event.nativeEvent.contentOffset.y;
-    // Only toggle if scrolled more than a threshold (e.g. 15 pixels) to prevent jitter
+    // Hide both header and filters when scrolling down past 50
     if (currentY - lastScrollY.current > 15 && currentY > 50) {
-      if (showHeaderFilters) {
+      if (showHeaderFilters || showAppHeader) {
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
         setShowHeaderFilters(false);
+        setShowAppHeader(false);
+        setShowFilterPanel(false);
+        setShowSortPanel(false);
       }
     } else if (lastScrollY.current - currentY > 15 || currentY <= 10) {
+      // Filters/search show on any scroll-back up
       if (!showHeaderFilters) {
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
         setShowHeaderFilters(true);
+      }
+      // Header ONLY shows when fully at top
+      if (currentY <= 5 && !showAppHeader) {
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        setShowAppHeader(true);
       }
     }
     lastScrollY.current = currentY;
@@ -4526,24 +4752,23 @@ export default function App() {
     <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
       <StatusBar barStyle={darkMode ? "light-content" : "dark-content"} />
       
-      {/* Mobile Dashboard Header */}
-      <View style={[styles.header, { backgroundColor: theme.headerBg, borderBottomColor: theme.border }]}>
-        <View>
-          <Text style={[styles.headerTitle, { color: theme.text }]}>Perfect Scholar CRM</Text>
-          <Text style={[styles.headerUser, { color: theme.textMuted }]}>Hi, {currentUser.full_name} ({currentUser.role.toUpperCase()})</Text>
+      {/* Mobile Dashboard Header — only on home screen, hides on scroll */}
+      {showAppHeader && (
+        <View style={[styles.header, { backgroundColor: theme.headerBg, borderBottomColor: theme.border }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+            <Text style={[styles.headerTitle, { color: theme.text }]}>Perfect Scholar</Text>
+            <Text style={{ fontSize: 10, color: theme.textMuted, fontWeight: '500' }}>• {currentUser.full_name.split(' ')[0]} ({currentUser.role.toUpperCase()})</Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <TouchableOpacity 
+              style={[styles.settingsBtn, { backgroundColor: darkMode ? '#334155' : '#F1F5F9' }]} 
+              onPress={() => setIsSettingsOpen(true)}
+            >
+              <Settings size={15} color={darkMode ? '#F1F5F9' : '#4F46E5'} />
+            </TouchableOpacity>
+          </View>
         </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <TouchableOpacity 
-            style={[styles.settingsBtn, { backgroundColor: darkMode ? '#334155' : '#F1F5F9' }]} 
-            onPress={() => setIsSettingsOpen(true)}
-          >
-            <Settings size={16} color={darkMode ? '#F1F5F9' : '#4F46E5'} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
-            <LogOut size={16} color="#EF4444" />
-          </TouchableOpacity>
-        </View>
-      </View>
+      )}
       {/* OTA Update Ready Banner */}
       {otaUpdateAvailable && (
         <TouchableOpacity
@@ -4577,70 +4802,6 @@ export default function App() {
 
       {dashboardTab === 'leads' && (
       <>
-        {showHeaderFilters && (
-          <>
-          {/* Pipeline Scroll view selector - FIXED */}
-      {pipelines.length > 0 && (
-        <View style={[styles.pipelineSelectorContainer, { borderBottomColor: theme.border }]}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 15, paddingVertical: 10, gap: 10, flexDirection: 'row' }}>
-            {pipelines.map(p => {
-              const isSelected = currentPipelineId === p.id;
-              return (
-                <TouchableOpacity
-                  key={p.id}
-                  onPress={() => {
-                    setActiveDashboardPipelineId(p.id);
-                    setSelectedStageFilter('All');
-                  }}
-                  style={[
-                    styles.pipelineSelBtn,
-                    { backgroundColor: darkMode ? '#334155' : '#F1F5F9', borderColor: theme.border },
-                    isSelected && { backgroundColor: darkMode ? '#818CF8' : '#4F46E5', borderColor: darkMode ? '#818CF8' : '#4F46E5' }
-                  ]}
-                >
-                  <Text style={[styles.pipelineSelBtnText, { color: theme.textMuted }, isSelected && { color: '#FFF' }]}>{p.name}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-      )}
-
-      {/* Pipeline Stage Horizontal Selector */}
-      <View style={[styles.horizontalPipelineContainer, { backgroundColor: theme.cardBg, borderBottomColor: theme.border }]}>
-        <ScrollView 
-          horizontal={true} 
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.horizontalPipelineScroll}
-        >
-          {['All', ...pipelineStages].map(stage => {
-            const isSelected = selectedStageFilter === stage;
-            const count = stage === 'All' 
-              ? myLeads.length 
-              : myLeads.filter(l => l.status === stage).length;
-            
-            return (
-              <TouchableOpacity
-                key={stage}
-                onPress={() => setSelectedStageFilter(stage)}
-                style={[
-                  styles.pipelineTab, 
-                  { backgroundColor: darkMode ? '#334155' : '#EEF2FF', borderColor: darkMode ? '#475569' : '#E2E8F0' },
-                  isSelected && { backgroundColor: '#4F46E5', borderColor: '#4F46E5' }
-                ]}
-              >
-                <Text style={[
-                  styles.pipelineTabText, 
-                  { color: darkMode ? '#94A3B8' : '#4F46E5' },
-                  isSelected && { color: '#FFFFFF' }
-                ]}>
-                  {stage} ({count})
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
 
       {/* Manual Entry Form Popup Modal Overlay */}
       {isAddModalOpen && (
@@ -4702,155 +4863,322 @@ export default function App() {
         </View>
       )}
 
-      {/* Search Input */}
-      <View style={[styles.searchBarContainer, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
-        <Search size={16} color="#94A3B8" style={styles.searchIcon} />
-        <TextInput
-          placeholder="Search leads by name, country..."
-          placeholderTextColor="#94A3B8"
-          value={searchTerm}
-          onChangeText={setSearchTerm}
-          style={[styles.searchTextInput, { color: theme.text }]}
-        />
-      </View>
-          </>
-        )}
+      {/* Search bar + Filter + Sort row */}
+      {showHeaderFilters && (
+        <View style={{ paddingHorizontal: 12, paddingTop: 10, paddingBottom: 6 }}>
+          <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+            {/* Search input */}
+            <View style={[styles.searchBarContainer, { flex: 1, marginHorizontal: 0, marginTop: 0, marginBottom: 0 }, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+              <Search size={14} color="#94A3B8" style={styles.searchIcon} />
+              <TextInput
+                placeholder="Search leads..."
+                placeholderTextColor="#94A3B8"
+                value={searchTerm}
+                onChangeText={setSearchTerm}
+                style={[styles.searchTextInput, { color: theme.text }]}
+              />
+              {searchTerm.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchTerm('')}>
+                  <X size={14} color="#94A3B8" />
+                </TouchableOpacity>
+              )}
+            </View>
 
+            {/* Filter button */}
+            <TouchableOpacity
+              onPress={() => { setShowFilterPanel(!showFilterPanel); setShowSortPanel(false); }}
+              style={[
+                styles.filterSortBtn,
+                { backgroundColor: showFilterPanel ? '#4F46E5' : (darkMode ? '#1E293B' : '#F1F5F9'), borderColor: showFilterPanel ? '#4F46E5' : theme.border }
+              ]}
+            >
+              <SlidersHorizontal size={13} color={showFilterPanel ? '#FFF' : (darkMode ? '#94A3B8' : '#64748B')} />
+              {(selectedStageFilter !== 'All' || selectedSourceFilter !== 'All' || (pipelines.length > 1)) && (
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#EF4444', position: 'absolute', top: 4, right: 4 }} />
+              )}
+            </TouchableOpacity>
+
+            {/* Sort button */}
+            <TouchableOpacity
+              onPress={() => { setShowSortPanel(!showSortPanel); setShowFilterPanel(false); }}
+              style={[
+                styles.filterSortBtn,
+                { backgroundColor: showSortPanel ? '#4F46E5' : (darkMode ? '#1E293B' : '#F1F5F9'), borderColor: showSortPanel ? '#4F46E5' : theme.border }
+              ]}
+            >
+              <ArrowUpDown size={13} color={showSortPanel ? '#FFF' : (darkMode ? '#94A3B8' : '#64748B')} />
+              {sortOption !== 'newest' && (
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#EF4444', position: 'absolute', top: 4, right: 4 }} />
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {/* Filter panel */}
+          {showFilterPanel && (
+            <View style={[styles.dropdownPanel, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+              {/* Pipeline row */}
+              {pipelines.length > 1 && (
+                <>
+                  <Text style={[styles.dropdownLabel, { color: theme.textMuted }]}>PIPELINE</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, flexDirection: 'row', paddingBottom: 10 }}>
+                    {pipelines.map(p => {
+                      const isSelected = currentPipelineId === p.id;
+                      return (
+                        <TouchableOpacity
+                          key={p.id}
+                          onPress={() => { setActiveDashboardPipelineId(p.id); setSelectedStageFilter('All'); }}
+                          style={[styles.dropdownChip, { backgroundColor: isSelected ? '#4F46E5' : (darkMode ? '#334155' : '#EEF2FF'), borderColor: isSelected ? '#4F46E5' : theme.border }]}
+                        >
+                          <Text style={[styles.dropdownChipText, { color: isSelected ? '#FFF' : theme.textMuted }]}>{p.name}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </>
+              )}
+              {/* Stage row */}
+              <Text style={[styles.dropdownLabel, { color: theme.textMuted }]}>STAGE</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingBottom: 10 }}>
+                {['All', ...pipelineStages].map(stage => {
+                  const isSelected = selectedStageFilter === stage;
+                  const count = stage === 'All' ? myLeads.length : myLeads.filter(l => l.status === stage).length;
+                  return (
+                    <TouchableOpacity
+                      key={stage}
+                      onPress={() => { setSelectedStageFilter(stage); }}
+                      style={[styles.dropdownChip, { backgroundColor: isSelected ? '#4F46E5' : (darkMode ? '#334155' : '#EEF2FF'), borderColor: isSelected ? '#4F46E5' : theme.border }]}
+                    >
+                      <Text style={[styles.dropdownChipText, { color: isSelected ? '#FFF' : theme.textMuted }]}>{stage} ({count})</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Source row */}
+              {leadSources.length > 0 && (
+                <>
+                  <Text style={[styles.dropdownLabel, { color: theme.textMuted, marginTop: 4 }]}>SOURCE</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                    {['All', ...leadSources].map(source => {
+                      const isSelected = selectedSourceFilter === source;
+                      const count = source === 'All' ? myLeads.length : myLeads.filter(l => l.lead_source === source).length;
+                      return (
+                        <TouchableOpacity
+                          key={source}
+                          onPress={() => { setSelectedSourceFilter(source); }}
+                          style={[styles.dropdownChip, { backgroundColor: isSelected ? '#4F46E5' : (darkMode ? '#334155' : '#EEF2FF'), borderColor: isSelected ? '#4F46E5' : theme.border }]}
+                        >
+                          <Text style={[styles.dropdownChipText, { color: isSelected ? '#FFF' : theme.textMuted }]}>{source} ({count})</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </>
+              )}
+            </View>
+          )}
+
+          {/* Sort panel */}
+          {showSortPanel && (
+            <View style={[styles.dropdownPanel, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+              <Text style={[styles.dropdownLabel, { color: theme.textMuted }]}>SORT BY</Text>
+              <View style={{ gap: 2 }}>
+                {[
+                  { key: 'newest', label: 'Newest First' },
+                  { key: 'oldest', label: 'Oldest First' },
+                  { key: 'name_az', label: 'Name A → Z' },
+                  { key: 'name_za', label: 'Name Z → A' },
+                  { key: 'score_desc', label: 'Highest Score' },
+                ].map(opt => {
+                  const isSelected = sortOption === opt.key;
+                  return (
+                    <TouchableOpacity
+                      key={opt.key}
+                      onPress={() => { setSortOption(opt.key as any); setShowSortPanel(false); }}
+                      style={[styles.dropdownRow, { backgroundColor: isSelected ? (darkMode ? '#334155' : '#EEF2FF') : 'transparent' }]}
+                    >
+                      <Text style={[styles.dropdownRowText, { color: isSelected ? (darkMode ? '#818CF8' : '#4F46E5') : theme.textMuted }]}>{opt.label}</Text>
+                      {isSelected && <Check size={13} color={darkMode ? '#818CF8' : '#4F46E5'} />}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+        </View>
+      )}
         {/* Leads Scroll list - stats + action header scroll with leads */}
-        <ScrollView 
-          style={[styles.listScroll, { backgroundColor: theme.bg }]} 
+        {/* Leads Scroll list - stats + action header scroll with leads */}
+        <FlatList
+          ref={flatListRef}
+          data={filteredLeads}
+          keyExtractor={lead => lead.id}
+          initialNumToRender={8}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          removeClippedSubviews={Platform.OS === 'android'}
+          renderItem={({ item: lead }) => (
+            <View style={[styles.leadItemCard, { backgroundColor: theme.leadCardBg, borderColor: theme.border }]}>
+              {/* Left: lead info + bottom status row */}
+              <TouchableOpacity 
+                style={{ flex: 1, paddingRight: 10 }}
+                onPress={() => {
+                  setPrevScreen('dashboard');
+                  setSelectedLead(lead);
+                  setCurrentScreen('detail');
+                }}
+              >
+                {/* Name + status dot */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                  {lead.status.toLowerCase() === 'contacted' && (
+                    <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#10B981' }} />
+                  )}
+                  <Text style={[styles.leadName, { color: theme.text }]} numberOfLines={1}>{lead.name}</Text>
+                </View>
+
+                {/* Phone + destination */}
+                <Text style={[styles.leadContactInfo, { color: theme.textMuted }]} numberOfLines={1}>
+                  {lead.phone}{lead.preferred_destination ? ` · ${lead.preferred_destination}` : ''}
+                </Text>
+
+                {/* Latest note preview — compact */}
+                {(() => {
+                  const leadNotes = notes.filter(n => n.lead_id === lead.id)
+                    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+                  if (leadNotes.length === 0) return null;
+                  const isCallLog = leadNotes[0].content.includes('[Call Log Note]');
+                  const clean = leadNotes[0].content.replace('[Call Log Note]', '').trim().split('\n')[0];
+                  return (
+                    <Text style={{ fontSize: 10, color: theme.textMuted, marginTop: 3 }} numberOfLines={1}>
+                      {isCallLog ? '📞' : '📝'} {clean}
+                    </Text>
+                  );
+                })()}
+
+                {/* Status + Source chips */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
+                  <TouchableOpacity
+                    style={[
+                      styles.statusLabelBadgeTouch,
+                      { backgroundColor: darkMode ? '#334155' : '#EEF2FF' }
+                    ]}
+                    onPress={() => {
+                      setSelectedLead(lead);
+                      setActivePickerType('status');
+                    }}
+                  >
+                    <Text style={[styles.statusLabelBadgeText, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>
+                      {lead.status} ▾
+                    </Text>
+                  </TouchableOpacity>
+                  <Text style={[styles.sourceLabelBadge, { backgroundColor: darkMode ? '#334155' : '#F1F5F9', color: theme.textMuted }]}>
+                    {lead.lead_source}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Right: action buttons stacked vertically */}
+              <View style={{ justifyContent: 'center', alignItems: 'center', gap: 8 }}>
+                {/* WhatsApp */}
+                <TouchableOpacity 
+                  style={[
+                    styles.leadCallBtnCircle, 
+                    { 
+                      backgroundColor: darkMode ? 'rgba(16, 185, 129, 0.15)' : '#ECFDF5', 
+                      borderColor: darkMode ? 'rgba(16, 185, 129, 0.3)' : '#A7F3D0'
+                    }
+                  ]}
+                  onPress={() => triggerWhatsApp(lead)}
+                >
+                  <Image 
+                    source={require('./assets/whatsapp_logo.png')} 
+                    style={{ width: 14, height: 14, tintColor: darkMode ? '#6EE7B7' : '#059669' }} 
+                  />
+                </TouchableOpacity>
+
+                {/* Call */}
+                <TouchableOpacity 
+                  style={[
+                    styles.leadCallBtnCircle, 
+                    { 
+                      backgroundColor: darkMode ? 'rgba(99, 102, 241, 0.15)' : '#EFF6FF',
+                      borderColor: darkMode ? 'rgba(99, 102, 241, 0.3)' : '#BFDBFE',
+                    }
+                  ]}
+                  onPress={() => triggerCall(lead)}
+                >
+                  <Phone size={14} color={darkMode ? '#A5B4FC' : '#2563EB'} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+          ListHeaderComponent={(
+            <View>
+              {/* Stats Summary Panel */}
+              <View style={[styles.statsSummaryRow, { marginTop: 0 }]}>
+                <View style={[styles.statsSummaryCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+                  <Text style={[styles.statsSummaryLabel, { color: theme.textMuted }]}>ASSIGNED LEADS</Text>
+                  <Text style={[styles.statsSummaryVal, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>{myLeads.length}</Text>
+                </View>
+                <TouchableOpacity 
+                  style={[styles.statsSummaryCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
+                  onPress={() => {
+                    setPrevScreen('dashboard');
+                    setCurrentScreen('tasksList');
+                  }}
+                >
+                  <Text style={[styles.statsSummaryLabel, { color: theme.textMuted }]}>PENDING TASKS</Text>
+                  <Text style={[styles.statsSummaryVal, { color: '#EF4444' }]}>
+                    {tasks.filter(t => !t.is_completed && myLeads.map(l => l.id).includes(t.lead_id)).length}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Action Header */}
+              <View style={[styles.actionHeaderRow, { gap: 4, marginTop: 15 }]}>
+                <Text style={[styles.listSectionTitle, { color: theme.text, flex: 1 }]} numberOfLines={1}>
+                  My Leads
+                </Text>
+                <TouchableOpacity 
+                  style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#1E293B' : '#F8FAFC', paddingHorizontal: 6 }]}
+                  onPress={handleExportCSV}
+                >
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: theme.textMuted }}>Export</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#1E293B' : '#F8FAFC', paddingHorizontal: 6 }]}
+                  onPress={() => setIsImportModalOpen(true)}
+                >
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: theme.textMuted }}>Import</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#1E293B' : '#F0FDF4', borderColor: '#86EFAC', borderWidth: 1, paddingHorizontal: 6 }]}
+                  onPress={handleSyncPartnerData}
+                  disabled={isSyncing}
+                >
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: '#16A34A' }}>
+                    {isSyncing ? 'Sync...' : 'Sync'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', paddingHorizontal: 6 }]}
+                  onPress={() => setIsAddModalOpen(true)}
+                >
+                  <Text style={[styles.addBtnHeaderText, { color: darkMode ? '#818CF8' : '#4F46E5', fontSize: 10 }]}>+ Lead</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+          ListEmptyComponent={
+            <Text style={[styles.noLeadsText, { color: theme.textMuted, textAlign: 'center', marginTop: 30 }]}>
+              No leads assigned to this profile matching query
+            </Text>
+          }
+          style={[styles.listScroll, { backgroundColor: theme.bg }]}
           contentContainerStyle={{ paddingBottom: 20 }}
           onScroll={handleScroll}
           scrollEventThrottle={16}
-        >
-
-        {/* Stats Summary Panel - scrolls with leads */}
-        <View style={[styles.statsSummaryRow, { marginTop: 0 }]}>
-          <View style={[styles.statsSummaryCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
-            <Text style={[styles.statsSummaryLabel, { color: theme.textMuted }]}>ASSIGNED LEADS</Text>
-            <Text style={[styles.statsSummaryVal, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>{myLeads.length}</Text>
-          </View>
-          <TouchableOpacity 
-            style={[styles.statsSummaryCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
-            onPress={() => {
-              setPrevScreen('dashboard');
-              setCurrentScreen('tasksList');
-            }}
-          >
-            <Text style={[styles.statsSummaryLabel, { color: theme.textMuted }]}>PENDING TASKS</Text>
-            <Text style={[styles.statsSummaryVal, { color: '#EF4444' }]}>
-              {tasks.filter(t => !t.is_completed && myLeads.map(l => l.id).includes(t.lead_id)).length}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Action Header - scrolls with leads */}
-        <View style={[styles.actionHeaderRow, { gap: 4 }]}>
-          <Text style={[styles.listSectionTitle, { color: theme.text, flex: 1 }]} numberOfLines={1}>
-            My Leads
-          </Text>
-          <TouchableOpacity 
-            style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#1E293B' : '#F8FAFC', paddingHorizontal: 6 }]}
-            onPress={handleExportCSV}
-          >
-            <Text style={{ fontSize: 10, fontWeight: '700', color: theme.textMuted }}>Export</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#1E293B' : '#F8FAFC', paddingHorizontal: 6 }]}
-            onPress={() => setIsImportModalOpen(true)}
-          >
-            <Text style={{ fontSize: 10, fontWeight: '700', color: theme.textMuted }}>Import</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#1E293B' : '#F0FDF4', borderColor: '#86EFAC', borderWidth: 1, paddingHorizontal: 6 }]}
-            onPress={handleSyncPartnerData}
-            disabled={isSyncing}
-          >
-            <Text style={{ fontSize: 10, fontWeight: '700', color: '#16A34A' }}>
-              {isSyncing ? 'Sync...' : 'Sync'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.addBtnHeader, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', paddingHorizontal: 6 }]}
-            onPress={() => setIsAddModalOpen(true)}
-          >
-            <Text style={[styles.addBtnHeaderText, { color: darkMode ? '#818CF8' : '#4F46E5', fontSize: 10 }]}>+ Lead</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Lead cards */}
-        {filteredLeads.length > 0 ? (
-          filteredLeads.map(lead => (
-            <View key={lead.id} style={[styles.leadItemCard, { backgroundColor: theme.leadCardBg, borderColor: theme.border }]}>
-              <View style={styles.leadCardHeaderRow}>
-                <TouchableOpacity 
-                  style={styles.leadCardClickableArea}
-                  onPress={() => {
-                    setPrevScreen('dashboard');
-                    setSelectedLead(lead);
-                    setCurrentScreen('detail');
-                  }}
-                >
-                  <View style={styles.leadCardHeader}>
-                    <Text style={[styles.leadName, { color: theme.text }]}>{lead.name}</Text>
-                    <View style={[styles.leadScoreBadge, { backgroundColor: darkMode ? '#334155' : '#F8FAFC' }]}>
-                      <Text style={[styles.leadScoreText, { color: theme.textMuted }]}>{lead.score} pts</Text>
-                    </View>
-                  </View>
-                  
-                  <Text style={[styles.leadContactInfo, { color: theme.textMuted, marginTop: 4 }]}>{lead.phone} • {lead.preferred_destination || 'Abroad'}</Text>
-                </TouchableOpacity>
-
-                {/* Call Shortcut Button */}
-                <TouchableOpacity 
-                  style={styles.leadCallBtnCircle}
-                  onPress={() => triggerCall(lead)}
-                >
-                  <Phone size={16} color="#6366F1" />
-                </TouchableOpacity>
-
-                {/* WhatsApp Shortcut Button */}
-                <TouchableOpacity 
-                  style={[styles.leadCallBtnCircle, { backgroundColor: darkMode ? '#064E3B' : '#E8FDF0', borderColor: darkMode ? '#047857' : '#A7F3D0', marginLeft: 8 }]}
-                  onPress={() => triggerWhatsApp(lead)}
-                >
-                  <MessageSquare size={16} color={darkMode ? '#34D399' : '#10B981'} />
-                </TouchableOpacity>
-              </View>
-              
-              {/* Badges Row at the bottom of the card, completely separate to prevent click issues */}
-              <View style={[styles.leadBadgesRow, { marginTop: 10 }]}>
-                <TouchableOpacity 
-                  style={[styles.statusLabelBadgeTouch, { backgroundColor: darkMode ? '#334155' : '#EEF2FF' }]}
-                  onPress={() => {
-                    setSelectedLead(lead);
-                    setActivePickerType('status');
-                  }}
-                >
-                  <Text style={[styles.statusLabelBadgeText, { color: darkMode ? '#818CF8' : '#4F46E5' }]}>{lead.status} ▾</Text>
-                </TouchableOpacity>
-
-                {/* Quick Allot/Assignee Badge */}
-                <TouchableOpacity 
-                  style={[styles.statusLabelBadgeTouch, { backgroundColor: darkMode ? '#334155' : '#EEF2FF', marginLeft: 8 }]}
-                  onPress={() => {
-                    setSelectedLead(lead);
-                    setActivePickerType('counsellor');
-                  }}
-                >
-                  <Text style={[styles.statusLabelBadgeText, { color: darkMode ? '#34D399' : '#059669' }]}>
-                    👤 {profiles.find(p => p.id === lead.assigned_counsellor_id)?.full_name || 'Unassigned'} ▾
-                  </Text>
-                </TouchableOpacity>
-
-                <Text style={[styles.sourceLabelBadge, { backgroundColor: darkMode ? '#334155' : '#F1F5F9', color: theme.textMuted, marginLeft: 'auto' }]}>{lead.lead_source}</Text>
-              </View>
-            </View>
-          ))
-        ) : (
-          <Text style={[styles.noLeadsText, { color: theme.textMuted }]}>No leads assigned to this profile matching query</Text>
-        )}
-      </ScrollView>
+        />
       </>
       )}
 
@@ -4968,12 +5296,11 @@ export default function App() {
       {(() => {
         const hasInboxAccess = currentUser?.has_shared_inbox_access || currentUser?.role === 'admin';
         
-        // Calculate total unread count for badge
+        // Calculate total unread count for badge using database status
         let totalUnreadCount = 0;
         chatHistory.forEach(msg => {
           if (!msg.lead_id || msg.direction !== 'in') return;
-          const lastSeen = lastSeenMap[msg.lead_id] || '1970-01-01T00:00:00.000Z';
-          if (msg.rawTime && new Date(msg.rawTime).getTime() > new Date(lastSeen).getTime()) {
+          if (msg.status === 'unread') {
             totalUnreadCount += 1;
           }
         });
@@ -4981,12 +5308,12 @@ export default function App() {
         return (
           <View style={{
             flexDirection: 'row',
-            height: 60,
+            height: 48,
             backgroundColor: theme.cardBg,
             borderTopWidth: 1,
             borderTopColor: theme.border,
-            paddingBottom: Platform.OS === 'ios' ? 15 : 5,
-            paddingTop: 5,
+            paddingBottom: Platform.OS === 'ios' ? 10 : 3,
+            paddingTop: 3,
             justifyContent: 'space-around',
             alignItems: 'center'
           }}>
@@ -4997,55 +5324,55 @@ export default function App() {
                 setSelectedInboxLeadId(null);
               }}
             >
-              <Users size={20} color={dashboardTab === 'leads' ? '#4F46E5' : theme.textMuted} />
-              <Text style={{ fontSize: 10, fontWeight: '700', marginTop: 4, color: dashboardTab === 'leads' ? '#4F46E5' : theme.textMuted }}>Leads</Text>
+              <Users size={18} color={dashboardTab === 'leads' ? '#4F46E5' : theme.textMuted} />
+              <Text style={{ fontSize: 9, fontWeight: '700', marginTop: 2, color: dashboardTab === 'leads' ? '#4F46E5' : theme.textMuted }}>Leads</Text>
             </TouchableOpacity>
-
-            {hasInboxAccess && (
-              <TouchableOpacity 
-                style={{ alignItems: 'center', flex: 1, position: 'relative' }}
-                onPress={() => {
-                  setDashboardTab('inbox');
-                }}
-              >
-                <View>
-                  <MessageSquare size={20} color={dashboardTab === 'inbox' ? '#4F46E5' : theme.textMuted} />
-                  {totalUnreadCount > 0 && (
-                    <View style={{
-                      position: 'absolute',
-                      right: -8,
-                      top: -8,
-                      backgroundColor: '#EF4444',
-                      borderRadius: 8,
-                      minWidth: 16,
-                      height: 16,
-                      justifyContent: 'center',
-                      alignItems: 'center',
-                      paddingHorizontal: 3
-                    }}>
-                      <Text style={{ color: '#FFF', fontSize: 9, fontWeight: '900' }}>
-                        {totalUnreadCount > 9 ? '9+' : totalUnreadCount}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-                <Text style={{ fontSize: 10, fontWeight: '700', marginTop: 4, color: dashboardTab === 'inbox' ? '#4F46E5' : theme.textMuted }}>Chats</Text>
-              </TouchableOpacity>
-            )}
-
-            <TouchableOpacity 
-              style={{ alignItems: 'center', flex: 1 }}
-              onPress={() => {
-                setDashboardTab('tasks');
-                setSelectedInboxLeadId(null);
-              }}
-            >
-              <CheckSquare size={20} color={dashboardTab === 'tasks' ? '#4F46E5' : theme.textMuted} />
-              <Text style={{ fontSize: 10, fontWeight: '700', marginTop: 4, color: dashboardTab === 'tasks' ? '#4F46E5' : theme.textMuted }}>Tasks</Text>
-            </TouchableOpacity>
-          </View>
-        );
-      })()}
+ 
+             {hasInboxAccess && (
+               <TouchableOpacity 
+                 style={{ alignItems: 'center', flex: 1, position: 'relative' }}
+                 onPress={() => {
+                   setDashboardTab('inbox');
+                 }}
+               >
+                 <View style={{ alignItems: 'center' }}>
+                   <MessageSquare size={18} color={dashboardTab === 'inbox' ? '#4F46E5' : theme.textMuted} />
+                   {totalUnreadCount > 0 && (
+                     <View style={{
+                       position: 'absolute',
+                       right: -8,
+                       top: -8,
+                       backgroundColor: '#EF4444',
+                       borderRadius: 8,
+                       minWidth: 16,
+                       height: 16,
+                       justifyContent: 'center',
+                       alignItems: 'center',
+                       paddingHorizontal: 3
+                     }}>
+                       <Text style={{ color: '#FFF', fontSize: 9, fontWeight: '900' }}>
+                         {totalUnreadCount > 9 ? '9+' : totalUnreadCount}
+                       </Text>
+                     </View>
+                   )}
+                 </View>
+                 <Text style={{ fontSize: 9, fontWeight: '700', marginTop: 2, color: dashboardTab === 'inbox' ? '#4F46E5' : theme.textMuted }}>Chats</Text>
+               </TouchableOpacity>
+             )}
+ 
+             <TouchableOpacity 
+               style={{ alignItems: 'center', flex: 1 }}
+               onPress={() => {
+                 setDashboardTab('tasks');
+                 setSelectedInboxLeadId(null);
+               }}
+             >
+               <CheckSquare size={18} color={dashboardTab === 'tasks' ? '#4F46E5' : theme.textMuted} />
+               <Text style={{ fontSize: 9, fontWeight: '700', marginTop: 2, color: dashboardTab === 'tasks' ? '#4F46E5' : theme.textMuted }}>Tasks</Text>
+             </TouchableOpacity>
+           </View>
+         );
+       })()}
 
       {renderFeedbackModal()}
       {renderSettingsModal()}
@@ -5357,6 +5684,17 @@ export default function App() {
 
 // --- NATIVE STYLESHEET ---
 const styles = StyleSheet.create({
+  leadCardNoteBox: {
+    marginTop: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 4,
+    borderLeftWidth: 3,
+  },
+  leadCardNoteText: {
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
   loadingContainer: {
     flex: 1,
     backgroundColor: '#0F172A',
@@ -5377,8 +5715,8 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === 'android' ? 48 : 0,
   },
   header: {
-    paddingHorizontal: 20,
-    paddingVertical: 15,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     backgroundColor: '#FFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
@@ -5509,40 +5847,42 @@ const styles = StyleSheet.create({
     lineHeight: 13
   },
   statsSummaryRow: {
-    padding: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     flexDirection: 'row',
-    gap: 15
+    gap: 10
   },
   statsSummaryCard: {
     flex: 1,
-    padding: 15,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     backgroundColor: '#FFF',
-    borderRadius: 20,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     shadowColor: '#000',
     shadowOpacity: 0.02,
-    shadowRadius: 5,
-    shadowOffset: { width: 0, height: 2 }
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 }
   },
   statsSummaryLabel: {
-    fontSize: 9,
-    fontWeight: '700',
+    fontSize: 8,
+    fontWeight: '800',
     color: '#94A3B8',
     letterSpacing: 0.5
   },
   statsSummaryVal: {
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: '900',
     color: '#4F46E5',
-    marginTop: 8
+    marginTop: 3
   },
   actionHeaderRow: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10
+    marginBottom: 8
   },
   listSectionTitle: {
     fontSize: 14,
@@ -5561,18 +5901,18 @@ const styles = StyleSheet.create({
     fontWeight: '700'
   },
   searchBarContainer: {
-    marginHorizontal: 20,
-    marginTop: 15,
-    marginBottom: 15,
+    marginHorizontal: 12,
+    marginTop: 10,
+    marginBottom: 10,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 6,
     backgroundColor: '#FFF',
-    borderRadius: 12,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     flexDirection: 'row',
     alignItems: 'center',
-    height: 42
+    height: 38
   },
   searchIcon: {
     marginRight: 8
@@ -5585,18 +5925,21 @@ const styles = StyleSheet.create({
   },
   listScroll: {
     flex: 1,
-    paddingHorizontal: 20
+    paddingHorizontal: 12
   },
   leadItemCard: {
     backgroundColor: '#FFF',
-    padding: 16,
-    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    marginBottom: 12,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
     shadowColor: '#000',
-    shadowOpacity: 0.01,
-    shadowRadius: 5,
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
     shadowOffset: { width: 0, height: 1 }
   },
   leadCardHeader: {
@@ -5951,14 +6294,16 @@ const styles = StyleSheet.create({
     paddingRight: 10
   },
   leadCallBtnCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#EEF2FF',
+    width: 32,
+    height: 32,
+    borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E0E7FF'
+    shadowColor: '#000',
+    shadowOpacity: 0.02,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 }
   },
   feedbackModalOverlay: {
     position: 'absolute',
@@ -6264,6 +6609,48 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     color: '#4F46E5'
+  },
+  filterSortBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dropdownPanel: {
+    marginTop: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+  },
+  dropdownLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  },
+  dropdownChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  dropdownChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  dropdownRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  dropdownRowText: {
+    fontSize: 13,
+    fontWeight: '500',
   },
   loginTabsRow: {
     flexDirection: 'row',
