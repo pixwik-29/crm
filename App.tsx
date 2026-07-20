@@ -2656,17 +2656,17 @@ export default function App() {
               {feedbackReminder && (
                 <View style={[styles.reminderContainer, { backgroundColor: darkMode ? '#1E293B' : '#F8FAFC', borderColor: theme.border }]}>
                   <Text style={[styles.feedbackSubLabel, { color: theme.text }]}>Quick Presets</Text>
-                  <View style={styles.presetsRow}>
-                    <TouchableOpacity style={styles.presetBtn} onPress={() => setPresetReminder(2)}>
+                  <View style={[styles.presetsRow, { flexWrap: 'nowrap' }]}>
+                    <TouchableOpacity style={[styles.presetBtn, { flex: 1, alignItems: 'center' }]} onPress={() => setPresetReminder(2)}>
                       <Text style={styles.presetBtnText}>In 2 Hrs</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.presetBtn} onPress={() => setPresetReminder(0, true)}>
+                    <TouchableOpacity style={[styles.presetBtn, { flex: 1, alignItems: 'center' }]} onPress={() => setPresetReminder(0, true)}>
                       <Text style={styles.presetBtnText}>Tom. 10am</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.presetBtn} onPress={() => setPresetReminder(0, false, true)}>
+                    <TouchableOpacity style={[styles.presetBtn, { flex: 1, alignItems: 'center' }]} onPress={() => setPresetReminder(0, false, true)}>
                       <Text style={styles.presetBtnText}>Tom. 3pm</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.presetBtn} onPress={() => setPresetReminder(0, false, false, true)}>
+                    <TouchableOpacity style={[styles.presetBtn, { flex: 1, alignItems: 'center' }]} onPress={() => setPresetReminder(0, false, false, true)}>
                       <Text style={styles.presetBtnText}>In 2 Days</Text>
                     </TouchableOpacity>
                   </View>
@@ -2881,9 +2881,9 @@ export default function App() {
                 </View>
               )}
 
-              <View style={[styles.modalActionsRow, { marginTop: 16 }]}>
+              <View style={[styles.modalActionsRow, { justifyContent: 'space-between', marginTop: 16 }]}>
                 <TouchableOpacity 
-                  style={styles.cancelModalBtn} 
+                  style={[styles.cancelModalBtn, { flex: 1, alignItems: 'center' }]} 
                   onPress={() => {
                     setFeedbackLead(null);
                     setIsDisqualifySheetOpen(false);
@@ -2893,7 +2893,7 @@ export default function App() {
                   <Text style={styles.cancelModalBtnText}>Skip / Dismiss</Text>
                 </TouchableOpacity>
                 <TouchableOpacity 
-                  style={styles.saveFeedbackBtn} 
+                  style={[styles.saveFeedbackBtn, { flex: 1, alignItems: 'center' }]} 
                   onPress={handleSaveFeedback}
                 >
                   <Text style={styles.saveFeedbackBtnText}>Save Follow-up</Text>
