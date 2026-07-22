@@ -597,8 +597,9 @@ export default function App() {
       }));
 
       // Secure client-side isolation: Only keep chats belonging to leads this user is authorized to see
+      const isAdminUser = currentUser?.role === 'admin';
       const accessibleLeadIds = new Set((leadsData || []).map(l => l.id));
-      const filteredChat = remappedChat.filter(c => accessibleLeadIds.has(c.lead_id));
+      const filteredChat = isAdminUser ? remappedChat : remappedChat.filter(c => c.lead_id && accessibleLeadIds.has(c.lead_id));
       
       setChatHistory(filteredChat);
       await AsyncStorage.setItem('m_chat', JSON.stringify(filteredChat));
@@ -929,8 +930,17 @@ export default function App() {
         }));
         
         // Secure client-side isolation: Only keep chats belonging to leads this user is authorized to see
-        const accessibleLeadIds = new Set(leads.map(l => l.id));
-        const filteredChat = remappedChat.filter(c => accessibleLeadIds.has(c.lead_id));
+        const isAdminUser = currentUser?.role === 'admin';
+        let filteredChat = remappedChat;
+        if (!isAdminUser) {
+          if (leads.length > 0) {
+            const accessibleLeadIds = new Set(leads.map(l => l.id));
+            filteredChat = remappedChat.filter(c => c.lead_id && accessibleLeadIds.has(c.lead_id));
+          } else {
+            // Do not wipe out chat history if leads state is temporarily empty
+            return;
+          }
+        }
         
         setChatHistory(filteredChat);
         await AsyncStorage.setItem('m_chat', JSON.stringify(filteredChat));
