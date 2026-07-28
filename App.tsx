@@ -464,6 +464,16 @@ export default function App() {
   const [partnerUploadedDocs, setPartnerUploadedDocs] = useState<PartnerUploadedDoc[]>([]);
   const [referredStudentSelectId, setReferredStudentSelectId] = useState<string>('');
   const [activeDashboardPipelineId, setActiveDashboardPipelineId] = useState<string>('');
+
+  const currentUserRef = useRef(currentUser);
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+
+  const leadsRef = useRef(leads);
+  useEffect(() => {
+    leadsRef.current = leads;
+  }, [leads]);
   
   // Call Feedback States
   const [feedbackLead, setFeedbackLead] = useState<Lead | null>(null);
@@ -963,7 +973,31 @@ export default function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, () => {
         fetchTasksOnly();
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, () => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notes' }, (payload) => {
+        fetchNotesOnly();
+        const newNote = payload.new as any;
+        if (newNote && newNote.author_id !== currentUserRef.current?.id) {
+          const lead = leadsRef.current.find((l: any) => l.id === newNote.lead_id);
+          const leadName = lead ? lead.name : 'Student';
+          if (newNote.content && newNote.content.includes(']:')) {
+            if (Notifications && typeof Notifications.scheduleNotificationAsync === 'function') {
+              Notifications.scheduleNotificationAsync({
+                content: {
+                  title: `💬 New Message for ${leadName}`,
+                  body: newNote.content,
+                  sound: 'default',
+                  data: { type: 'note_added', leadId: newNote.lead_id }
+                },
+                trigger: null
+              }).catch((err: any) => console.warn('[Realtime] Failed to schedule local notification:', err));
+            }
+          }
+        }
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notes' }, () => {
+        fetchNotesOnly();
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'notes' }, () => {
         fetchNotesOnly();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_history' }, () => {
@@ -980,7 +1014,9 @@ export default function App() {
     }, 30000);
 
     return () => {
-      supabase.removeChannel(leadsChannel);
+      if (leadsChannel) {
+        supabase.removeChannel(leadsChannel);
+      }
       clearInterval(pollInterval);
     };
   }, [currentUser]);
@@ -1584,6 +1620,85 @@ export default function App() {
     }
   };
 
+  const notifyLeadStatusOrNote = async (
+    type: 'status_change' | 'note_added',
+    leadId: string,
+    newStatusOrNoteContent: string
+  ) => {
+    try {
+      const { data: student, error: studentErr } = await supabase
+        .from('partner_students')
+        .select('id, first_name, last_name, partner_id')
+        .eq('crm_lead_id', leadId)
+        .maybeSingle();
+
+      if (studentErr || !student) {
+        console.log('[notify] No linked student found for lead:', leadId);
+        return;
+      }
+
+      const studentName = `${student.first_name} ${student.last_name}`;
+
+      const { data: partnerUsers, error: usersErr } = await supabase
+        .from('partner_users')
+        .select('id, full_name, push_token')
+        .eq('partner_id', student.partner_id)
+        .not('push_token', 'is', null);
+
+      if (usersErr) {
+        console.error('[notify] Failed to fetch partner users:', usersErr);
+      }
+
+      const tokens = (partnerUsers || [])
+        .map((u: any) => u.push_token as string)
+        .filter((t) => t.startsWith('ExponentPushToken') || t.startsWith('ExpoPushToken'));
+
+      let title = '';
+      let msgBody = '';
+
+      if (type === 'status_change') {
+        await supabase
+          .from('partner_students')
+          .update({ application_status: newStatusOrNoteContent, updated_at: new Date().toISOString() })
+          .eq('id', student.id);
+
+        title = '🎓 Student Status Update';
+        msgBody = `${studentName}'s application status has been updated to "${newStatusOrNoteContent}".`;
+      } else {
+        title = '💬 New Message from Counselor';
+        msgBody = `${studentName}: ${newStatusOrNoteContent}`;
+      }
+
+      await supabase
+        .from('partner_announcements')
+        .insert([{ 
+          title, 
+          content: msgBody, 
+          priority: 'normal', 
+          target_partner_id: student.partner_id, 
+          type: 'notification',
+          created_at: new Date().toISOString()
+        }]);
+
+      if (tokens.length > 0) {
+        await fetch('https://exp.host/--/api/v2/push/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify(tokens.map(token => ({
+            to: token,
+            sound: 'default',
+            title,
+            body: msgBody,
+            data: { type: type === 'status_change' ? 'status_change' : 'note_added', leadId }
+          })))
+        });
+        console.log('[notify] Expo push dispatched to tokens:', tokens.length);
+      }
+    } catch (err) {
+      console.error('[notify] Error in notifyLeadStatusOrNote:', err);
+    }
+  };
+
   // Note add
   const handleAddNote = async () => {
     if (!noteText.trim() || !selectedLead) return;
@@ -1601,6 +1716,8 @@ export default function App() {
         .single();
 
       if (error) throw error;
+
+      notifyLeadStatusOrNote('note_added', selectedLead.id, noteText);
 
       // Add activity log
       await supabase.from('activity_logs').insert([{
@@ -2013,6 +2130,10 @@ export default function App() {
 
         if (error) throw error;
 
+        if (field === 'status' && value) {
+          notifyLeadStatusOrNote('status_change', selectedLead.id, value);
+        }
+
         const desc = field === 'status' 
           ? `Pipeline status changed to "${value}"` 
           : `Assigned counsellor changed to "${profiles.find(p => p.id === value)?.full_name || 'Unassigned'}"`;
@@ -2078,6 +2199,8 @@ export default function App() {
           })
           .eq('id', leadId);
         if (error) throw error;
+
+        notifyLeadStatusOrNote('status_change', leadId, initialStage);
 
         await supabase.from('activity_logs').insert([{
           lead_id: leadId,
