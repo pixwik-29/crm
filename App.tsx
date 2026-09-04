@@ -4416,7 +4416,8 @@ export default function App() {
           direction: 'outgoing',
           message_text: textToSend,
           status: 'sent',
-          tenant_id: currentUser?.tenant_id || 'default'
+          tenant_id: currentUser?.tenant_id || 'default',
+          sent_by_ai: false
         }])
         .select()
         .single();
