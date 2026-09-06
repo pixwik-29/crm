@@ -8,7 +8,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { 
   Phone, MessageSquare, MessageCircle, Mail, Tag, ArrowLeft, Award, User, Clock, Search, Users,
   Plus, Check, LogOut, ArrowRight, Eye, Shield, Bell, PlusCircle, CheckCircle, Smartphone, Settings,
-  FileText, Upload, Camera, Plane, CheckSquare, Square, X, Slash, SlidersHorizontal, ArrowUpDown, ChevronDown
+  FileText, Upload, Camera, Plane, CheckSquare, Square, X, Slash, SlidersHorizontal, ArrowUpDown, ChevronDown, Paperclip
 } from 'lucide-react-native';
 import { createClient } from '@supabase/supabase-js';
 import * as Device from 'expo-device';
@@ -40,6 +40,31 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: false,
   },
 });
+
+const CRM_WEB_URL = 'https://crm.perfectscholar.com';
+
+type InboxAttachment = { uri: string; name: string; mime: string };
+
+function guessWhatsAppSendType(file?: InboxAttachment | null): 'text' | 'image' | 'document' | 'video' {
+  if (!file) return 'text';
+  const mime = String(file.mime || '').toLowerCase();
+  const name = String(file.name || '').toLowerCase();
+  if (mime.startsWith('image/') || /\.(jpg|jpeg|png|gif)$/i.test(name)) return 'image';
+  if (mime.startsWith('video/') || /\.(mp4|3gp|mov)$/i.test(name)) return 'video';
+  return 'document';
+}
+
+function remapWhatsAppRow(c: any) {
+  return {
+    id: c.id,
+    lead_id: c.lead_id,
+    direction: (c.direction === 'incoming' ? 'in' : 'out') as 'in' | 'out',
+    text: c.message_text,
+    time: new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    rawTime: c.created_at,
+    status: c.status,
+  };
+}
 
 // Configure foreground notification handling
 if (Notifications) {
@@ -439,6 +464,9 @@ export default function App() {
   const [dashboardTab, setDashboardTab] = useState<'leads' | 'inbox' | 'tasks'>('leads');
   const [selectedInboxLeadId, setSelectedInboxLeadId] = useState<string | null>(null);
   const [inboxMessageInput, setInboxMessageInput] = useState('');
+  const [inboxAttachment, setInboxAttachment] = useState<InboxAttachment | null>(null);
+  const [inboxSending, setInboxSending] = useState(false);
+  const inboxMessagesRef = useRef<FlatList<any>>(null);
   const [lastSeenMap, setLastSeenMap] = useState<Record<string, string>>({});
   const [showHeaderFilters, setShowHeaderFilters] = useState(true);
   const [showAppHeader, setShowAppHeader] = useState(true);
@@ -592,19 +620,13 @@ export default function App() {
       const { data: chatData, error: chatError } = await supabase
         .from('whatsapp_history')
         .select('*')
-        .order('created_at', { ascending: false });
+        .eq('tenant_id', currentUser?.tenant_id || 'default')
+        .order('created_at', { ascending: false })
+        .limit(2000);
       if (chatError) throw chatError;
 
       // Remap incoming/outgoing to mobile in/out
-      const remappedChat = (chatData || []).map(c => ({
-        id: c.id,
-        lead_id: c.lead_id,
-        direction: c.direction === 'incoming' ? ('in' as const) : ('out' as const),
-        text: c.message_text,
-        time: new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        rawTime: c.created_at,
-        status: c.status
-      }));
+      const remappedChat = (chatData || []).map(remapWhatsAppRow);
 
       // Secure client-side isolation: Only keep chats belonging to leads this user is authorized to see
       const isAdminUser = currentUser?.role === 'admin';
@@ -924,20 +946,28 @@ export default function App() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) return;
+      const tenantId = currentUser?.tenant_id || 'default';
       const { data: chatData, error: chatError } = await supabase
         .from('whatsapp_history')
         .select('*')
-        .order('created_at', { ascending: false });
-      if (!chatError && chatData) {
-        const remappedChat = chatData.map(c => ({
-          id: c.id,
-          lead_id: c.lead_id,
-          direction: c.direction === 'incoming' ? ('in' as const) : ('out' as const),
-          text: c.message_text,
-          time: new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          rawTime: c.created_at,
-          status: c.status
-        }));
+        .eq('tenant_id', tenantId)
+        .order('created_at', { ascending: false })
+        .limit(2000);
+      let rows = chatData || [];
+      if (selectedInboxLeadId) {
+        const { data: threadRows } = await supabase
+          .from('whatsapp_history')
+          .select('*')
+          .eq('lead_id', selectedInboxLeadId)
+          .order('created_at', { ascending: true });
+        if (threadRows && threadRows.length > 0) {
+          const byId = new Map(rows.map((row: any) => [row.id, row]));
+          threadRows.forEach((row: any) => byId.set(row.id, row));
+          rows = Array.from(byId.values());
+        }
+      }
+      if (!chatError && rows) {
+        const remappedChat = rows.map(remapWhatsAppRow);
         
         // Secure client-side isolation: Only keep chats belonging to leads this user is authorized to see
         const isAdminUser = currentUser?.role === 'admin';
@@ -1059,6 +1089,30 @@ export default function App() {
       }
     }
   }, [selectedInboxLeadId, selectedLead, currentScreen, detailTab, dashboardTab, chatHistory]);
+
+  useEffect(() => {
+    if (!selectedInboxLeadId) return;
+    let cancelled = false;
+    const loadThread = async () => {
+      const { data } = await supabase
+        .from('whatsapp_history')
+        .select('*')
+        .eq('lead_id', selectedInboxLeadId)
+        .order('created_at', { ascending: true });
+      if (cancelled || !data) return;
+      const remapped = data.map(remapWhatsAppRow);
+      setChatHistory(prev => {
+        const others = prev.filter(m => m.lead_id !== selectedInboxLeadId);
+        const byId = new Map(others.map(m => [m.id, m]));
+        remapped.forEach(m => byId.set(m.id, m));
+        return Array.from(byId.values());
+      });
+    };
+    loadThread();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedInboxLeadId]);
 
   // Handle Android hardware back button to navigate pages or close modals instead of exiting app
   useEffect(() => {
@@ -3206,139 +3260,146 @@ export default function App() {
     }
   };
 
+  const sendWhatsAppViaCrm = async (lead: Lead, textToSend: string, file?: InboxAttachment | null) => {
+    const tenantId = currentUser?.tenant_id || 'default';
+    const phone = lead.whatsapp_number || lead.phone;
+    if (!phone || phone === '#') throw new Error('Lead has no WhatsApp/phone number.');
+
+    const sendType = file ? guessWhatsAppSendType(file) : 'text';
+    if (file) {
+      try {
+        const fileInfo = await FileSystem.getInfoAsync(file.uri);
+        const size = fileInfo.exists ? Number((fileInfo as { size?: number }).size || 0) : 0;
+        if (size > 4.2 * 1024 * 1024) {
+          throw new Error('This file is too large for a WhatsApp send from the app (max about 4 MB). Try a smaller PDF or photo.');
+        }
+      } catch (sizeErr: any) {
+        if (String(sizeErr?.message || '').includes('too large')) throw sizeErr;
+      }
+    }
+    let response: Response;
+    if (file) {
+      const form = new FormData();
+      form.append('tenantId', tenantId);
+      form.append('to', phone);
+      form.append('type', sendType);
+      form.append('message', textToSend || '');
+      form.append('file', {
+        uri: file.uri,
+        name: file.name,
+        type: file.mime || 'application/octet-stream',
+      } as any);
+      response = await fetch(`${CRM_WEB_URL}/api/whatsapp/send`, { method: 'POST', body: form });
+    } else {
+      response = await fetch(`${CRM_WEB_URL}/api/whatsapp/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId,
+          to: phone,
+          type: 'text',
+          message: textToSend,
+        }),
+      });
+    }
+
+    const result = await response.json().catch(() => ({} as any));
+    if (!response.ok) {
+      throw new Error(result.error || 'Failed to send WhatsApp message');
+    }
+
+    const historyText = [textToSend.trim(), file ? file.name : ''].filter(Boolean).join('\n') || '[Attachment]';
+    const { data: newMsg, error } = await supabase
+      .from('whatsapp_history')
+      .insert([{
+        lead_id: lead.id,
+        direction: 'outgoing',
+        message_text: historyText,
+        status: 'sent',
+        tenant_id: tenantId,
+        sent_by_ai: false,
+      }])
+      .select()
+      .single();
+    if (error) throw error;
+
+    await supabase.from('activity_logs').insert([{
+      lead_id: lead.id,
+      actor_id: currentUser?.id,
+      action_type: 'whatsapp_sent',
+      description: `Sent WhatsApp reply: "${historyText.substring(0, 40)}"`,
+      tenant_id: tenantId,
+    }]);
+
+    setChatHistory(prev => [...prev, remapWhatsAppRow(newMsg)]);
+  };
+
+  const pickInboxAttachment = () => {
+    Alert.alert('Attach file', 'Send a photo or PDF like a regular WhatsApp chat.', [
+      {
+        text: 'Photo',
+        onPress: async () => {
+          const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            quality: 0.8,
+          });
+          if (!result.canceled && result.assets?.[0]) {
+            const asset = result.assets[0];
+            setInboxAttachment({
+              uri: asset.uri,
+              name: asset.fileName || `photo_${Date.now()}.jpg`,
+              mime: asset.mimeType || 'image/jpeg',
+            });
+          }
+        },
+      },
+      {
+        text: 'PDF',
+        onPress: async () => {
+          const result = await DocumentPicker.getDocumentAsync({
+            type: ['application/pdf', 'image/*'],
+            copyToCacheDirectory: true,
+          });
+          if (!result.canceled && result.assets?.[0]) {
+            const asset = result.assets[0];
+            setInboxAttachment({
+              uri: asset.uri,
+              name: asset.name || `document_${Date.now()}.pdf`,
+              mime: asset.mimeType || 'application/pdf',
+            });
+          }
+        },
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
   const renderWhatsAppModal = () => null;
 
-  // WhatsApp Simulation chats
   const handleSendWhatsAppSim = async () => {
-    if (!chatInput.trim() || !selectedLead) return;
-
+    if ((!chatInput.trim() && !inboxAttachment) || !selectedLead) return;
     const messageText = chatInput;
     setChatInput('');
-
     try {
-      // 1. Insert outgoing message to Supabase
-      const { data: newMsg, error } = await supabase
-        .from('whatsapp_history')
-        .insert([{
-          lead_id: selectedLead.id,
-          direction: 'outgoing',
-          message_text: messageText,
-          status: 'sent',
-          tenant_id: currentUser?.tenant_id || 'default'
-        }])
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      // Add activity log
-      await supabase.from('activity_logs').insert([{
-        lead_id: selectedLead.id,
-        actor_id: currentUser?.id,
-        action_type: 'whatsapp_sent',
-        description: `Sent WhatsApp reply: "${messageText.substring(0, 30)}..."`,
-        tenant_id: currentUser?.tenant_id || 'default'
-      }]);
-
-      // Remap and update local state
-      const remappedNewMsg = {
-        id: newMsg.id,
-        lead_id: newMsg.lead_id,
-        direction: 'out' as const,
-        text: newMsg.message_text,
-        time: new Date(newMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        rawTime: newMsg.created_at
-      };
-      setChatHistory(prev => [...prev, remappedNewMsg]);
-
-      // Try sending a real Meta WhatsApp message
-      let sentRealMessage = false;
-      let errorMsg = '';
-      try {
-        const { data: settingsData } = await supabase
-          .from('settings')
-          .select('meta_access_token, whatsapp_phone_id')
-          .single();
-
-        if (settingsData?.meta_access_token && settingsData?.whatsapp_phone_id) {
-          const cleanPhone = (selectedLead.whatsapp_number || selectedLead.phone).replace(/\D/g, '');
-          const url = `https://graph.facebook.com/v19.0/${settingsData.whatsapp_phone_id}/messages`;
-          const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${settingsData.meta_access_token}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              messaging_product: 'whatsapp',
-              recipient_type: 'individual',
-              to: cleanPhone,
-              type: 'text',
-              text: { body: messageText }
-            })
-          });
-
-          const resData = await response.json();
-          if (response.ok) {
-            sentRealMessage = true;
-            await supabase
-              .from('whatsapp_history')
-              .update({ status: 'delivered' })
-              .eq('id', newMsg.id);
-          } else {
-            errorMsg = resData.error?.message || 'Meta API error';
-            console.warn('[WhatsApp Meta Send] Failed:', errorMsg);
-          }
-        }
-      } catch (settingsErr: any) {
-        console.warn('[WhatsApp Meta Send] Credentials fetch or send failed:', settingsErr.message);
-      }
-
-      if (sentRealMessage) {
-        return; // Bypasses chatbot simulator for actual live conversations
-      }
-
-      if (errorMsg) {
-        Alert.alert("Warning", `Message logged, but could not send to phone: ${errorMsg}`);
-      }
-
-      // 2. Chatbot reply simulation after 2.5 seconds (only for local test/sim fallback)
-      setTimeout(async () => {
-        try {
-          const replyText = "Got your message. I am currently out with my parents, but I will check the college brochures by tonight. Thank you!";
-          
-          const { data: botMsg } = await supabase
-            .from('whatsapp_history')
-            .insert([{
-              lead_id: selectedLead.id,
-              direction: 'incoming',
-              message_text: replyText,
-              status: 'unread',
-              tenant_id: currentUser?.tenant_id || 'default'
-            }])
-            .select()
-            .single();
-
-          if (botMsg) {
-            const remappedIncoming = {
-              id: botMsg.id,
-              lead_id: botMsg.lead_id,
-              direction: 'in' as const,
-              text: botMsg.message_text,
-              time: new Date(botMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              rawTime: botMsg.created_at,
-              status: botMsg.status
-            };
-            setChatHistory(prev => [...prev, remappedIncoming]);
-            Alert.alert(`📱 New reply from ${selectedLead.name}`, "Check the WhatsApp chat log in details tab.");
-          }
-        } catch (botErr) {
-          console.error("Bot simulation save error:", botErr);
-        }
-      }, 2500);
-
+      await sendWhatsAppViaCrm(selectedLead, messageText);
     } catch (e: any) {
-      Alert.alert("Error", e.message || "Failed to send WhatsApp message.");
+      Alert.alert('Error', e.message || 'Failed to send WhatsApp message.');
+    }
+  };
+
+  const handleSendSharedInboxMsg = async (lead: Lead, textToSend: string, file?: InboxAttachment | null) => {
+    if (!textToSend.trim() && !file) return;
+    if (inboxSending) return;
+    setInboxSending(true);
+    try {
+      await sendWhatsAppViaCrm(lead, textToSend, file);
+      setInboxMessageInput('');
+      setInboxAttachment(null);
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert('Error', e.message || 'Failed to send message');
+    } finally {
+      setInboxSending(false);
     }
   };
 
@@ -4406,135 +4467,6 @@ export default function App() {
     );
   }
 
-  const handleSendSharedInboxMsg = async (lead: Lead, textToSend: string) => {
-    if (!textToSend.trim()) return;
-    try {
-      const { data: newMsg, error } = await supabase
-        .from('whatsapp_history')
-        .insert([{
-          lead_id: lead.id,
-          direction: 'outgoing',
-          message_text: textToSend,
-          status: 'sent',
-          tenant_id: currentUser?.tenant_id || 'default',
-          sent_by_ai: false
-        }])
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      // Add activity log
-      await supabase.from('activity_logs').insert([{
-        lead_id: lead.id,
-        actor_id: currentUser?.id,
-        action_type: 'whatsapp_sent',
-        description: `Sent WhatsApp reply from Shared Inbox: "${textToSend.substring(0, 30)}..."`,
-        tenant_id: currentUser?.tenant_id || 'default'
-      }]);
-
-      // Remap and update local state
-      const remappedNewMsg = {
-        id: newMsg.id,
-        lead_id: newMsg.lead_id,
-        direction: 'out' as const,
-        text: newMsg.message_text,
-        time: new Date(newMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        rawTime: newMsg.created_at
-      };
-      setChatHistory(prev => [...prev, remappedNewMsg]);
-
-      // Try sending a real Meta WhatsApp message
-      let sentRealMessage = false;
-      let errorMsg = '';
-      try {
-        const { data: settingsData } = await supabase
-          .from('settings')
-          .select('meta_access_token, whatsapp_phone_id')
-          .single();
-
-        if (settingsData?.meta_access_token && settingsData?.whatsapp_phone_id) {
-          const cleanPhone = (lead.whatsapp_number || lead.phone).replace(/\D/g, '');
-          const url = `https://graph.facebook.com/v19.0/${settingsData.whatsapp_phone_id}/messages`;
-          const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${settingsData.meta_access_token}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              messaging_product: 'whatsapp',
-              recipient_type: 'individual',
-              to: cleanPhone,
-              type: 'text',
-              text: { body: textToSend }
-            })
-          });
-
-          const resData = await response.json();
-          if (response.ok) {
-            sentRealMessage = true;
-            await supabase
-              .from('whatsapp_history')
-              .update({ status: 'delivered' })
-              .eq('id', newMsg.id);
-          } else {
-            errorMsg = resData.error?.message || 'Meta API error';
-            console.warn('[WhatsApp Meta Send Inbox] Failed:', errorMsg);
-          }
-        }
-      } catch (settingsErr: any) {
-        console.warn('[WhatsApp Meta Send Inbox] Credentials fetch or send failed:', settingsErr.message);
-      }
-
-      if (sentRealMessage) {
-        return; // Bypasses chatbot simulator for actual live conversations
-      }
-
-      if (errorMsg) {
-        Alert.alert("Warning", `Message logged, but could not send to phone: ${errorMsg}`);
-      }
-
-      // Simulate reply after 2.5 seconds (only for local test/sim fallback)
-      setTimeout(async () => {
-        try {
-          const replyText = "Got your message. I am currently out with my parents, but I will check the college brochures by tonight. Thank you!";
-          
-          const { data: botMsg } = await supabase
-            .from('whatsapp_history')
-            .insert([{
-              lead_id: lead.id,
-              direction: 'incoming',
-              message_text: replyText,
-              status: 'unread',
-              tenant_id: currentUser?.tenant_id || 'default'
-            }])
-            .select()
-            .single();
-
-          if (botMsg) {
-            const remappedIncoming = {
-              id: botMsg.id,
-              lead_id: botMsg.lead_id,
-              direction: 'in' as const,
-              text: botMsg.message_text,
-              time: new Date(botMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              rawTime: botMsg.created_at,
-              status: botMsg.status
-            };
-            setChatHistory(prev => [...prev, remappedIncoming]);
-          }
-        } catch (e) {
-          console.error("Simulation error: ", e);
-        }
-      }, 2500);
-      
-    } catch (e: any) {
-      console.error(e);
-      Alert.alert("Error", e.message || "Failed to send message");
-    }
-  };
-
   function renderSharedInboxView() {
     // 1. Thread List View (when selectedInboxLeadId is null)
     if (!selectedInboxLeadId) {
@@ -4603,11 +4535,26 @@ export default function App() {
           </View>
 
           {/* List of active threads */}
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }}>
-            {threadsList.length > 0 ? (
-              threadsList.map(thread => {
-                const initials = thread.leadName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || '?';
-                return (
+          <FlatList
+            style={{ flex: 1 }}
+            data={threadsList}
+            keyExtractor={(thread) => thread.leadId}
+            initialNumToRender={16}
+            windowSize={8}
+            removeClippedSubviews
+            contentContainerStyle={{ paddingBottom: 20, flexGrow: 1 }}
+            ListEmptyComponent={
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 100, paddingHorizontal: 40 }}>
+                <MessageSquare size={48} color={theme.textMuted} style={{ marginBottom: 15, opacity: 0.5 }} />
+                <Text style={{ fontSize: 14, fontWeight: '700', color: theme.text, textAlign: 'center' }}>No Active Threads</Text>
+                <Text style={{ fontSize: 12, color: theme.textMuted, textAlign: 'center', marginTop: 6 }}>
+                  Incoming WhatsApp messages will appear here.
+                </Text>
+              </View>
+            }
+            renderItem={({ item: thread }) => {
+              const initials = thread.leadName.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase() || '?';
+              return (
                   <TouchableOpacity
                     key={thread.leadId}
                     style={{
@@ -4621,14 +4568,12 @@ export default function App() {
                     }}
                     onPress={async () => {
                       setSelectedInboxLeadId(thread.leadId);
-                      // Mark thread as read
                       const now = new Date().toISOString();
                       const updatedMap = { ...lastSeenMap, [thread.leadId]: now };
                       setLastSeenMap(updatedMap);
                       await AsyncStorage.setItem('m_last_seen_map', JSON.stringify(updatedMap));
                     }}
                   >
-                    {/* Initials Avatar */}
                     <View style={{
                       width: 48,
                       height: 48,
@@ -4642,8 +4587,6 @@ export default function App() {
                         {initials}
                       </Text>
                     </View>
-
-                    {/* Middle: Details */}
                     <View style={{ flex: 1, marginRight: 10 }}>
                       <Text style={{ fontSize: 14, fontWeight: thread.unreadCount > 0 ? '900' : '700', color: theme.text }}>
                         {thread.leadName}
@@ -4660,8 +4603,6 @@ export default function App() {
                         {thread.lastMessageText}
                       </Text>
                     </View>
-
-                    {/* Right: Time & Badge */}
                     <View style={{ alignItems: 'flex-end' }}>
                       <Text style={{ fontSize: 10, color: theme.textMuted }}>
                         {thread.lastMessageTime}
@@ -4682,18 +4623,9 @@ export default function App() {
                       )}
                     </View>
                   </TouchableOpacity>
-                );
-              })
-            ) : (
-              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 100, paddingHorizontal: 40 }}>
-                <MessageSquare size={48} color={theme.textMuted} style={{ marginBottom: 15, opacity: 0.5 }} />
-                <Text style={{ fontSize: 14, fontWeight: '700', color: theme.text, textAlign: 'center' }}>No Active Threads</Text>
-                <Text style={{ fontSize: 12, color: theme.textMuted, textAlign: 'center', marginTop: 6 }}>
-                  Start a WhatsApp simulator chat from a candidate's profile to view conversations here.
-                </Text>
-              </View>
-            )}
-          </ScrollView>
+              );
+            }}
+          />
         </View>
       );
     }
@@ -4770,19 +4702,19 @@ export default function App() {
         </View>
 
         {/* Messaging Area */}
-        <ScrollView 
-          style={{ flex: 1, paddingHorizontal: 15 }} 
+        <FlatList
+          ref={inboxMessagesRef}
+          style={{ flex: 1, paddingHorizontal: 15 }}
           contentContainerStyle={{ paddingVertical: 20 }}
-          ref={ref => {
-            // Auto scroll to bottom
-            setTimeout(() => ref?.scrollToEnd({ animated: true }), 100);
-          }}
-        >
-          {messages.map(msg => {
+          data={messages}
+          keyExtractor={(msg) => String(msg.id)}
+          initialNumToRender={24}
+          windowSize={8}
+          onContentSizeChange={() => inboxMessagesRef.current?.scrollToEnd({ animated: false })}
+          renderItem={({ item: msg }) => {
             const isOutgoing = msg.direction === 'out';
             return (
               <View 
-                key={msg.id}
                 style={{
                   alignSelf: isOutgoing ? 'flex-end' : 'flex-start',
                   backgroundColor: isOutgoing ? '#4F46E5' : (darkMode ? '#1E293B' : '#E2E8F0'),
@@ -4792,11 +4724,7 @@ export default function App() {
                   borderBottomRightRadius: isOutgoing ? 4 : 16,
                   borderBottomLeftRadius: isOutgoing ? 16 : 4,
                   maxWidth: '75%',
-                  marginBottom: 10,
-                  shadowColor: '#000',
-                  shadowOpacity: 0.02,
-                  shadowRadius: 3,
-                  shadowOffset: { width: 0, height: 1 }
+                  marginBottom: 10
                 }}
               >
                 <Text style={{ color: isOutgoing ? '#FFF' : theme.text, fontSize: 13, lineHeight: 18 }}>
@@ -4813,10 +4741,29 @@ export default function App() {
                 </Text>
               </View>
             );
-          })}
-        </ScrollView>
+          }}
+        />
 
-
+        {inboxAttachment ? (
+          <View style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            marginHorizontal: 15,
+            marginTop: 8,
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            borderRadius: 12,
+            backgroundColor: darkMode ? '#334155' : '#EEF2FF'
+          }}>
+            <Paperclip size={14} color="#4F46E5" />
+            <Text numberOfLines={1} style={{ flex: 1, marginLeft: 8, fontSize: 12, fontWeight: '700', color: theme.text }}>
+              {inboxAttachment.name}
+            </Text>
+            <TouchableOpacity onPress={() => setInboxAttachment(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <X size={14} color={theme.textMuted} />
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
         {/* Input Bar */}
         <View style={{
@@ -4829,6 +4776,20 @@ export default function App() {
           backgroundColor: theme.cardBg,
           paddingBottom: Platform.OS === 'ios' ? 25 : 10
         }}>
+          <TouchableOpacity
+            onPress={pickInboxAttachment}
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 18,
+              backgroundColor: darkMode ? '#334155' : '#F1F5F9',
+              justifyContent: 'center',
+              alignItems: 'center',
+              marginRight: 8
+            }}
+          >
+            <Paperclip size={16} color="#4F46E5" />
+          </TouchableOpacity>
           <TextInput 
             style={{
               flex: 1,
@@ -4848,24 +4809,25 @@ export default function App() {
             value={inboxMessageInput}
             onChangeText={setInboxMessageInput}
             multiline
+            editable={!inboxSending}
           />
           <TouchableOpacity 
+            disabled={inboxSending || (!inboxMessageInput.trim() && !inboxAttachment) || !activeLead}
             style={{
               width: 36,
               height: 36,
               borderRadius: 18,
-              backgroundColor: '#4F46E5',
+              backgroundColor: inboxSending ? '#94A3B8' : '#4F46E5',
               justifyContent: 'center',
               alignItems: 'center'
             }}
             onPress={() => {
-              if (activeLead && inboxMessageInput.trim()) {
-                handleSendSharedInboxMsg(activeLead, inboxMessageInput);
-                setInboxMessageInput('');
+              if (activeLead && (inboxMessageInput.trim() || inboxAttachment)) {
+                handleSendSharedInboxMsg(activeLead, inboxMessageInput, inboxAttachment);
               }
             }}
           >
-            <ArrowRight size={16} color="#FFF" />
+            {inboxSending ? <ActivityIndicator size="small" color="#FFF" /> : <ArrowRight size={16} color="#FFF" />}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
